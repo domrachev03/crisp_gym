@@ -29,6 +29,7 @@ from crisp_py.robot import Pose
 from crisp_py.robot.robot_config import make_robot_config
 from scipy.spatial.transform import Rotation
 
+from crisp_gym.bilateral.filters import FirstOrderHighPass, soft_deadband
 from crisp_gym.bilateral.pose_math import (
     aligned_pose,
     increment_world,
@@ -78,6 +79,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--feedback-gain", type=float, default=1.0)
     p.add_argument("--feedback-sign", type=float, default=1.0)
     p.add_argument("--feedback-max-force", type=float, default=20.0)
+    p.add_argument("--reflect-highpass-hz", type=float, default=0.0,
+                   help="High-pass cutoff (Hz) on the reflected wrench; strips the slow F/T "
+                        "bias DC that drifts the free-float leader. 0 = off.")
+    p.add_argument("--reflect-deadband-n", type=float, default=0.0,
+                   help="Soft deadband (N) on the reflected force magnitude; nulls the "
+                        "free-space noise floor. 0 = off.")
     p.add_argument("--feedback-wrench-topic", type=str, default="/right/netft_data_unbiased_tcp")
     p.add_argument("--contact-threshold-n", type=float, default=1.0)
     p.add_argument("--leader-config", type=str, default="left_no_gripper")
@@ -171,6 +178,7 @@ def main() -> None:
     ch_fwd = DelayedChannel(args.delay_steps, fwd_dim, fill=fwd_fill)  # leader -> follower
     ch_back = DelayedChannel(args.delay_steps, 6)     # follower -> leader (wrench)
     tdpa = MasterOnlyPOPC(dof=6, contact_threshold_n=args.contact_threshold_n) if args.tdpa else None
+    reflect_hp = FirstOrderHighPass(args.reflect_highpass_hz, dof=6, dt=dt)  # strips reflected DC
     telem = TeleopLogger() if args.log else None
 
     logger.info(f":rocket: Bilateral teleop: mode={args.mode} coupling={args.coupling} "
@@ -216,6 +224,8 @@ def main() -> None:
             if args.force:
                 fe = args.feedback_sign * args.feedback_gain * (follower_wrench - wrench_bias)
                 fe = rotate_wrench(wrench_rotation, fe)  # follower-TCP -> leader-TCP frame
+                fe = reflect_hp.step(fe)                 # strip slow F/T bias DC (drift driver)
+                fe[:3] = soft_deadband(fe[:3], args.reflect_deadband_n)  # null free-space noise floor
                 ch_back.send(fe)
                 reflected = ch_back.receive()
                 leader_twist = leader.robot.end_effector_twist
