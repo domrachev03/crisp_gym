@@ -91,3 +91,25 @@ def offset_joint(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> ND
     return np.asarray(local_home, dtype=float) + (
         np.asarray(ref_now, dtype=float) - np.asarray(ref_home, dtype=float)
     )
+
+
+def wrench_frame_rotation(leader_home: NDArray, follower_home: NDArray) -> Rotation:
+    """Constant rotation mapping a follower-TCP wrench into the leader-TCP frame.
+
+    The follower NetFT wrench is expressed in the follower TCP frame; the leader
+    consumes it via ``set_target_wrench`` with ``use_local_jacobian`` (leader TCP
+    frame). Assuming the two robot bases are world-aligned (as ``aligned_pose``
+    couples the motion), a vector goes follower-TCP -> world -> leader-TCP as
+    ``R = R_leaderHome⁻¹ · R_followerHome`` (constant, from the home orientations).
+    For a pure yaw offset this rotates the lateral axes and leaves z (table normal)
+    unchanged. Homes are ``[x, y, z, qw, qx, qy, qz]``.
+    """
+    return _rot(leader_home).inv() * _rot(follower_home)
+
+
+def rotate_wrench(rotation: Rotation, wrench: NDArray) -> NDArray:
+    """Rotate the force and torque blocks of a 6-vector wrench by ``rotation`` -> (6,)."""
+    out = np.asarray(wrench, dtype=float).copy()
+    out[:3] = rotation.apply(out[:3])
+    out[3:] = rotation.apply(out[3:])
+    return out

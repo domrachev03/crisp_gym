@@ -34,6 +34,8 @@ from crisp_gym.bilateral.pose_math import (
     increment_world,
     integrate_pose,
     offset_joint,
+    rotate_wrench,
+    wrench_frame_rotation,
 )
 from crisp_gym.bilateral.tdpa import MasterOnlyPOPC
 from crisp_gym.bilateral.telemetry import TeleopLogger
@@ -115,11 +117,17 @@ def main() -> None:
     # --- constant home anchors (both arms are homed & settled at this point) -----
     # Leader (fr3_hand_tcp, no gripper) and follower (panda_hand_tcp, gripper) share
     # the same home joint config but report DIFFERENT end-effector poses (different
-    # TCP frames). Capture both homes once: absolute coupling maps leader_home ->
-    # follower_home (constant frame offset), so engagement is jump-free.
+    # TCP frames). Capture EE home poses (orientation drives the wrench frame
+    # correction, needed in both modes) plus the coupling anchors.
+    leader_ee_home = pose_to_vec(leader.robot.end_effector_pose)
+    follower_ee_home = pose_to_vec(env.robot.end_effector_pose)
+    # Reflected force is in the follower TCP frame; rotate it into the leader TCP
+    # frame (set_target_wrench uses the local jacobian) so lateral force is faithful.
+    wrench_rotation = wrench_frame_rotation(leader_ee_home, follower_ee_home)
+
     if args.mode == "cartesian":
-        leader_home = pose_to_vec(leader.robot.end_effector_pose)
-        follower_home = pose_to_vec(env.robot.end_effector_pose)
+        leader_home = leader_ee_home
+        follower_home = follower_ee_home
         env.robot.set_target(pose=vec_to_pose(follower_home))  # hold home until loop commands
     else:
         leader_home = leader.robot.joint_values.copy()
@@ -207,6 +215,7 @@ def main() -> None:
             reflected = np.zeros(6)
             if args.force:
                 fe = args.feedback_sign * args.feedback_gain * (follower_wrench - wrench_bias)
+                fe = rotate_wrench(wrench_rotation, fe)  # follower-TCP -> leader-TCP frame
                 ch_back.send(fe)
                 reflected = ch_back.receive()
                 leader_twist = leader.robot.end_effector_twist

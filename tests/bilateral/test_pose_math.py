@@ -14,6 +14,8 @@ from crisp_gym.bilateral.pose_math import (
     integrate_pose,
     offset_joint,
     offset_pose,
+    rotate_wrench,
+    wrench_frame_rotation,
 )
 
 
@@ -138,3 +140,35 @@ def test_aligned_vs_offset_differ_under_frame_rotation():
     b = offset_pose(local_home, ref_home, ref_now)
     assert np.allclose(a[:3], [0.1, 0.0, 0.0], atol=1e-9)  # 1:1, untwisted
     assert np.allclose(b[:3], [0.0, 0.1, 0.0], atol=1e-9)  # twisted by Rz(90)
+
+
+# --- wrench frame correction (follower-TCP force -> leader-TCP) -------------------
+# The follower NetFT wrench is in the follower TCP frame; set_target_wrench with
+# use_local_jacobian applies it in the leader TCP frame. wrench_frame_rotation maps
+# between them via the constant home orientations (bases aligned): R = R_lead^-1 R_fol.
+
+
+def test_wrench_rotation_identity_when_homes_aligned():
+    lh = _pose([0.5, 0.0, 0.5], Rotation.from_euler("xyz", [0.1, 0.2, 0.3]))
+    fh = _pose([0.3, 0.0, 0.4], Rotation.from_euler("xyz", [0.1, 0.2, 0.3]))  # same orientation
+    R = wrench_frame_rotation(lh, fh)
+    w = np.array([1.0, 2.0, 3.0, 0.1, 0.2, 0.3])
+    assert np.allclose(rotate_wrench(R, w), w, atol=1e-9)
+
+
+def test_wrench_rotation_yaw90_maps_x_to_y_keeps_z():
+    lh = _pose([0.0, 0.0, 0.0], Rotation.identity())
+    fh = _pose([0.0, 0.0, 0.0], Rotation.from_euler("z", 90, degrees=True))
+    R = wrench_frame_rotation(lh, fh)  # = R_lead^-1 R_fol = Rz(90)
+    # follower force +x -> leader frame +y; +z (table normal) preserved
+    assert np.allclose(rotate_wrench(R, np.array([1.0, 0, 0, 0, 0, 0]))[:3], [0, 1, 0], atol=1e-9)
+    assert np.allclose(rotate_wrench(R, np.array([0, 0, 1.0, 0, 0, 0]))[:3], [0, 0, 1], atol=1e-9)
+
+
+def test_rotate_wrench_rotates_force_and_torque_blocks():
+    lh = _pose([0.0, 0.0, 0.0], Rotation.identity())
+    fh = _pose([0.0, 0.0, 0.0], Rotation.from_euler("z", 90, degrees=True))
+    R = wrench_frame_rotation(lh, fh)
+    out = rotate_wrench(R, np.array([1.0, 0, 0, 1.0, 0, 0]))
+    assert np.allclose(out[:3], [0, 1, 0], atol=1e-9)  # force block
+    assert np.allclose(out[3:], [0, 1, 0], atol=1e-9)  # torque block
