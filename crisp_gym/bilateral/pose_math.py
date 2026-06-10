@@ -39,3 +39,34 @@ def integrate_pose(pose: NDArray, incr: NDArray, scale: float = 1.0) -> NDArray:
     delta = Rotation.from_rotvec(scale * np.asarray(incr[3:], dtype=float))
     new_rot = delta * _rot(pose)  # left-multiply: world-frame delta
     return _pack(new_trans, new_rot)
+
+
+def offset_pose(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> NDArray:
+    """Map a reference pose through the constant rigid offset between two EE frames.
+
+    For anchored absolute coupling: the leader (``ref``) and follower (``local``)
+    end-effectors sit in *different* frames at the shared home configuration (e.g.
+    ``fr3_hand_tcp`` vs ``panda_hand_tcp``, gripper vs no gripper). The fixed
+    world-frame offset ``T = local_home ∘ ref_home⁻¹`` captures that difference once;
+    applying it to the live reference pose, ``target = T ∘ ref_now``, yields a
+    follower target that equals ``local_home`` exactly when ``ref_now == ref_home``
+    (no jump at engagement) and mirrors the reference's absolute motion thereafter.
+    Recomputed from fixed anchors each call -> drift-free. Poses are
+    ``[x, y, z, qw, qx, qy, qz]``.
+    """
+    r_off = _rot(local_home) * _rot(ref_home).inv()
+    t_off = np.asarray(local_home[:3], dtype=float) - r_off.apply(np.asarray(ref_home[:3], dtype=float))
+    new_rot = r_off * _rot(ref_now)
+    new_trans = r_off.apply(np.asarray(ref_now[:3], dtype=float)) + t_off
+    return _pack(new_trans, new_rot)
+
+
+def offset_joint(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> NDArray:
+    """Joint-space anchored absolute: ``local_home + (ref_now - ref_home)`` -> (nq,).
+
+    Equals ``local_home`` at engagement (``ref_now == ref_home``); tracks the
+    reference's joint displacement through the constant home offset.
+    """
+    return np.asarray(local_home, dtype=float) + (
+        np.asarray(ref_now, dtype=float) - np.asarray(ref_home, dtype=float)
+    )

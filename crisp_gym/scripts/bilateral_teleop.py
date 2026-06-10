@@ -29,7 +29,12 @@ from crisp_py.robot import Pose
 from crisp_py.robot.robot_config import make_robot_config
 from scipy.spatial.transform import Rotation
 
-from crisp_gym.bilateral.pose_math import increment_world, integrate_pose
+from crisp_gym.bilateral.pose_math import (
+    increment_world,
+    integrate_pose,
+    offset_joint,
+    offset_pose,
+)
 from crisp_gym.bilateral.tdpa import MasterOnlyPOPC
 from crisp_gym.bilateral.telemetry import TeleopLogger
 from crisp_gym.envs.manipulator_env import ManipulatorCartesianEnv
@@ -86,7 +91,6 @@ def main() -> None:
     args = parse_args()
     setup_logging(level=args.log_level)
     dt = 1.0 / args.control_frequency
-    dof = 6 if args.mode == "cartesian" else 7
 
     # --- robots -----------------------------------------------------------------
     logger.info("Setting up leader robot...")
@@ -107,6 +111,22 @@ def main() -> None:
     if args.mode == "joint":
         # 1:1 joint mapping needs identical configs; both already homed above.
         env.robot.controller_switcher_client.switch_controller("joint_impedance_controller")
+
+    # --- constant home anchors (both arms are homed & settled at this point) -----
+    # Leader (fr3_hand_tcp, no gripper) and follower (panda_hand_tcp, gripper) share
+    # the same home joint config but report DIFFERENT end-effector poses (different
+    # TCP frames). Capture both homes once: absolute coupling maps leader_home ->
+    # follower_home (constant frame offset), so engagement is jump-free.
+    if args.mode == "cartesian":
+        leader_home = pose_to_vec(leader.robot.end_effector_pose)
+        follower_home = pose_to_vec(env.robot.end_effector_pose)
+        env.robot.set_target(pose=vec_to_pose(follower_home))  # hold home until loop commands
+    else:
+        leader_home = leader.robot.joint_values.copy()
+        follower_home = env.robot.joint_values.copy()
+        env.robot.set_target_joint(follower_home)
+    prev_leader = leader_home.copy()        # relative-coupling increment anchor
+    follower_target = follower_home.copy()  # relative-coupling integrated target
 
     # --- follower wrench subscription (force reflection source) ------------------
     follower_wrench = np.zeros(6)
@@ -131,21 +151,22 @@ def main() -> None:
         wrench_bias = np.zeros(6)
 
     # --- channels (optional artificial delay), TDPA, logger ---------------------
-    ch_fwd = DelayedChannel(args.delay_steps, dof)    # leader -> follower (pose/joint)
+    # Forward-channel payload + priming fill depend on coupling:
+    #   absolute -> full leader pose/joints; fill = leader_home, so an un-primed
+    #               channel (first delay_steps ticks) yields the home target and the
+    #               follower stays put -- no jump.
+    #   relative -> per-step increments; fill = zeros.
+    if args.coupling == "absolute":
+        fwd_dim, fwd_fill = len(leader_home), leader_home
+    else:
+        fwd_dim, fwd_fill = (6 if args.mode == "cartesian" else 7), None
+    ch_fwd = DelayedChannel(args.delay_steps, fwd_dim, fill=fwd_fill)  # leader -> follower
     ch_back = DelayedChannel(args.delay_steps, 6)     # follower -> leader (wrench)
     tdpa = MasterOnlyPOPC(dof=6, contact_threshold_n=args.contact_threshold_n) if args.tdpa else None
     telem = TeleopLogger() if args.log else None
 
     logger.info(f":rocket: Bilateral teleop: mode={args.mode} coupling={args.coupling} "
                 f"tdpa={args.tdpa} force={args.force} delay_steps={args.delay_steps}")
-
-    # Coupling state
-    if args.mode == "cartesian":
-        prev_leader = pose_to_vec(leader.robot.end_effector_pose)
-        follower_target = pose_to_vec(env.robot.end_effector_pose)
-    else:
-        prev_leader = leader.robot.joint_values.copy()
-        follower_target = env.robot.joint_values.copy()
 
     t0 = time.monotonic()
     step = 0
@@ -158,9 +179,8 @@ def main() -> None:
                 leader_vec = pose_to_vec(leader.robot.end_effector_pose)
                 if args.coupling == "absolute":
                     ch_fwd.send(leader_vec)
-                    target_vec = ch_fwd.receive()
-                    if np.allclose(target_vec, 0.0):  # channel not primed yet
-                        target_vec = leader_vec
+                    leader_delayed = ch_fwd.receive()  # == leader_home until primed (fill)
+                    target_vec = offset_pose(follower_home, leader_home, leader_delayed)
                     env.robot.set_target(pose=vec_to_pose(target_vec))
                 else:  # relative
                     incr = increment_world(prev_leader, leader_vec)
@@ -172,9 +192,8 @@ def main() -> None:
                 leader_q = leader.robot.joint_values
                 if args.coupling == "absolute":
                     ch_fwd.send(leader_q)
-                    tq = ch_fwd.receive()
-                    if np.allclose(tq, 0.0):
-                        tq = leader_q
+                    leader_delayed = ch_fwd.receive()  # == leader_home until primed (fill)
+                    tq = offset_joint(follower_home, leader_home, leader_delayed)
                     env.robot.set_target_joint(tq)
                 else:
                     incr = leader_q - prev_leader
