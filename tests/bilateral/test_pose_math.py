@@ -9,6 +9,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from crisp_gym.bilateral.pose_math import (
+    aligned_pose,
     increment_world,
     integrate_pose,
     offset_joint,
@@ -97,3 +98,43 @@ def test_offset_joint_no_jump_and_tracks():
     assert np.allclose(offset_joint(qh_local, qh_ref, qh_ref), qh_local)  # engagement
     delta = np.array([0.0, 0.1, -0.2, 0.0, 0.05, 0.0, 0.0])
     assert np.allclose(offset_joint(qh_local, qh_ref, qh_ref + delta), qh_local + delta)
+
+
+# --- aligned absolute (1:1 world-axis mapping, no inter-frame twist) --------------
+# aligned_pose maps the reference's world translation+rotation increments from its
+# home onto the local home, so a +x reference move gives a +x follower move (same
+# axis labels) regardless of any orientation difference between the two TCP frames
+# (fr3_hand_tcp vs panda_hand_tcp). This is what offset_pose does NOT do: offset_pose
+# applies the full rigid home offset and therefore twists motion by that difference.
+
+
+def test_aligned_pose_no_jump_with_frame_rotation():
+    # Homes differ by a 90deg yaw (the fr3 vs panda tcp convention case).
+    local_home = _pose([0.31, 0.0, 0.42], Rotation.from_euler("z", 90, degrees=True))
+    ref_home = _pose([0.50, -0.04, 0.50], Rotation.identity())
+    out = aligned_pose(local_home, ref_home, ref_home)
+    assert np.allclose(out[:3], local_home[:3], atol=1e-9)
+    ang = (_rot_of(out).inv() * _rot_of(local_home)).magnitude()
+    assert np.isclose(ang, 0.0, atol=1e-9)
+
+
+def test_aligned_pose_translation_is_one_to_one_despite_frame_rotation():
+    # KEY property: a +x reference move yields a +x follower move (same axis labels),
+    # even though the two home orientations differ by 90deg about z.
+    local_home = _pose([0.31, 0.0, 0.42], Rotation.from_euler("z", 90, degrees=True))
+    ref_home = _pose([0.50, -0.04, 0.50], Rotation.identity())
+    ref_now = _pose([0.60, -0.04, 0.50], Rotation.identity())  # +x by 0.10
+    out = aligned_pose(local_home, ref_home, ref_now)
+    assert np.allclose(out[:3], np.array([0.31, 0.0, 0.42]) + np.array([0.10, 0.0, 0.0]), atol=1e-9)
+
+
+def test_aligned_vs_offset_differ_under_frame_rotation():
+    # Guards the design choice for Cartesian absolute: aligned_pose keeps motion 1:1,
+    # offset_pose twists it by the home-orientation difference (Rz(90) here).
+    local_home = _pose([0.0, 0.0, 0.0], Rotation.from_euler("z", 90, degrees=True))
+    ref_home = _pose([0.0, 0.0, 0.0], Rotation.identity())
+    ref_now = _pose([0.1, 0.0, 0.0], Rotation.identity())
+    a = aligned_pose(local_home, ref_home, ref_now)
+    b = offset_pose(local_home, ref_home, ref_now)
+    assert np.allclose(a[:3], [0.1, 0.0, 0.0], atol=1e-9)  # 1:1, untwisted
+    assert np.allclose(b[:3], [0.0, 0.1, 0.0], atol=1e-9)  # twisted by Rz(90)

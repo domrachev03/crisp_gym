@@ -61,6 +61,27 @@ def offset_pose(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> NDA
     return _pack(new_trans, new_rot)
 
 
+def aligned_pose(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> NDArray:
+    """Anchored absolute target with 1:1 world-axis mapping (no inter-frame twist).
+
+    Maps the reference's world-frame translation and rotation *increments* from its
+    home directly onto the local home::
+
+        target_pos = local_home_pos + (ref_now_pos - ref_home_pos)
+        target_rot = ΔR_world(ref_home -> ref_now) · local_home_rot
+
+    so a +x reference move yields a +x follower move (same axis labels) and a roll
+    yields a roll -- independent of any orientation difference between the two TCP
+    frames. This is the difference from :func:`offset_pose`, which applies the full
+    rigid home offset ``T = local ∘ ref⁻¹`` and therefore *inherits* the leader/
+    follower TCP-frame convention difference (here ~90° about z) as a twist on the
+    motion. Jump-free at engagement (``ref_now == ref_home`` -> ``local_home``),
+    drift-free (recomputed from fixed anchors each call). Poses are
+    ``[x, y, z, qw, qx, qy, qz]``.
+    """
+    return integrate_pose(local_home, increment_world(ref_home, ref_now))
+
+
 def offset_joint(local_home: NDArray, ref_home: NDArray, ref_now: NDArray) -> NDArray:
     """Joint-space anchored absolute: ``local_home + (ref_now - ref_home)`` -> (nq,).
 

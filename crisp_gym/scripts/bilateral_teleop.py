@@ -30,10 +30,10 @@ from crisp_py.robot.robot_config import make_robot_config
 from scipy.spatial.transform import Rotation
 
 from crisp_gym.bilateral.pose_math import (
+    aligned_pose,
     increment_world,
     integrate_pose,
     offset_joint,
-    offset_pose,
 )
 from crisp_gym.bilateral.tdpa import MasterOnlyPOPC
 from crisp_gym.bilateral.telemetry import TeleopLogger
@@ -180,7 +180,8 @@ def main() -> None:
                 if args.coupling == "absolute":
                     ch_fwd.send(leader_vec)
                     leader_delayed = ch_fwd.receive()  # == leader_home until primed (fill)
-                    target_vec = offset_pose(follower_home, leader_home, leader_delayed)
+                    # 1:1 world-axis mapping from matched home (no fr3/panda TCP twist)
+                    target_vec = aligned_pose(follower_home, leader_home, leader_delayed)
                     env.robot.set_target(pose=vec_to_pose(target_vec))
                 else:  # relative
                     incr = increment_world(prev_leader, leader_vec)
