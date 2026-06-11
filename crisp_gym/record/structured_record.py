@@ -215,11 +215,11 @@ class CameraReader:
     A read that times out raises (RealSense ``async_read`` TimeoutError). The recording
     manager catches it and DISCARDS the current episode rather than crashing the run --
     a dropped camera frame nullifies that episode, the session continues. The per-read
-    timeout is a little more tolerant than LeRobot's 200 ms default to avoid nullifying
-    an episode over a single slightly-late frame.
+    timeout is more tolerant than LeRobot's 200 ms default so a transient stall doesn't
+    nullify an episode over a single slightly-late frame.
     """
 
-    def __init__(self, specs: list[CameraSpec], read_timeout_ms: int = 300) -> None:
+    def __init__(self, specs: list[CameraSpec], read_timeout_ms: int = 600) -> None:
         from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
         self.specs = specs

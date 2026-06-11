@@ -67,6 +67,8 @@ def main():  # noqa: C901
     p.add_argument("--topic-template", type=str, default="/{ns}/{topic}")
     p.add_argument("--camera-config", type=str, default="realsense_rig",
                    help="Camera config under cameras/, or 'none'.")
+    p.add_argument("--camera-read-timeout-ms", type=int, default=600,
+                   help="Per-frame RealSense read timeout; a stall beyond this nullifies the episode.")
     p.add_argument("--image-writer-threads", type=int, default=8,
                    help="Async image-writer threads (0 = synchronous; processes deadlock with ROS).")
     p.add_argument("--no-target", dest="include_target", action="store_false", default=True)
@@ -100,7 +102,7 @@ def main():  # noqa: C901
             cam_specs = load_camera_specs(args.camera_config)
             for s in cam_specs:
                 s.fps = cam_fps
-            cams = CameraReader(cam_specs)
+            cams = CameraReader(cam_specs, read_timeout_ms=args.camera_read_timeout_ms)
 
         # Bilateral scheme (opt-in). When set, the dataset records the controller
         # telemetry + a commanded-target action; dof = 7 joint, 6 cartesian.
