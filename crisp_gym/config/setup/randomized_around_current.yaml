@@ -1,20 +1,19 @@
-# Episode setup: randomize around the follower's CURRENT TCP pose (no re-home).
-# home_before_first=false + start_center=null => the runner captures the follower's
-# current end-effector pose at episode 0 and uses it as the fixed randomization center
-# for every episode. Between episodes the follower retracts straight up then moves to a
-# fresh sampled start around that captured point. The bilateral coupling re-anchors at
-# each start (jump-free).
+# Episode setup: randomize around a FIXED point = the slave follower TCP pose,
+# snapshotted from /right/current_pose on inference_pc (2026-06-11). Same
+# randomization as lerobot-panda (uniform xyz jitter + yaw about z), retract between
+# episodes. To re-snapshot, echo /right/current_pose and replace start_center.
 enabled: true
-home_before_first: false   # use the current slave TCP as the origin (do NOT re-home)
+home_before_first: false   # explicit center; don't re-home the follower
 move_speed: 0.05           # m/s, gentle blocking moves
 retract_z_offset: 0.10     # go up ~10 cm after each episode
 final_settle_s: 0.5
-wait_for_input: false      # the recording manager's start key gates the episode
+wait_for_input: false       # the recording manager's start key gates the episode
 
-seed: 0                    # reproducible jitter (seed + episode_index)
+seed: 0                     # reproducible jitter (seed + episode_index)
 
-start_center: null         # null + no home => capture the current follower TCP as center
-center_z_offset: 0.05      # lift the captured origin 5 cm up (start above the surface)
+start_center:
+  position: [0.45793572, -0.02236707, 0.20625054]
+  quaternion_xyzw: [0.94033175, -0.33866609, 0.00776405, 0.03195616]
 
 start_jitter:
   x: 0.05                  # +- m
