@@ -116,6 +116,28 @@ class CameraSpec:
     fps: int = 30
 
 
+def load_camera_specs(config_name: str) -> list[CameraSpec]:
+    """Load a list of CameraSpec from a YAML under CRISP_CONFIG_PATH.
+
+    YAML shape::
+
+        cameras:
+          - {name: wrist, serial: "130322271369", width: 640, height: 480, fps: 30}
+          - {name: front, serial: "838212074376"}
+    """
+    import yaml
+
+    from crisp_gym.config.path import find_config
+
+    rel = config_name if config_name.endswith((".yaml", ".yml")) else f"cameras/{config_name}.yaml"
+    path = find_config(rel)
+    if path is None:
+        raise FileNotFoundError(f"Camera config '{rel}' not found in CRISP config paths.")
+    with open(path) as f:
+        data = yaml.safe_load(f) or {}
+    return [CameraSpec(**c) for c in data.get("cameras", [])]
+
+
 class CameraReader:
     """Connects LeRobot RealSenseCamera objects and reads frames per step."""
 
