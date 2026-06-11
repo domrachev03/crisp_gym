@@ -121,3 +121,13 @@ def test_center_captured_from_home_pose_when_unset():
     # zero jitter -> start pose == captured center == the home pose
     move = next(c for c in robot.calls if c[0] == "move_to")
     assert np.allclose(move[1][0], [0.5, 0.0, 0.4], atol=1e-9)
+
+
+def test_center_z_offset_lifts_origin():
+    robot = _FakeRobot()  # home pose z = 0.4
+    runner = EpisodeSetupRunner(
+        robot, _cfg(start_center=None, start_jitter=StartJitter(), center_z_offset=0.05),
+        pose_factory=_FakePose)
+    runner.setup_episode(0, sleep_fn=lambda s: None)
+    move = next(c for c in robot.calls if c[0] == "move_to")
+    assert np.allclose(move[1][0], [0.5, 0.0, 0.45], atol=1e-9)  # lifted 5 cm

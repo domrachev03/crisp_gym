@@ -14,6 +14,7 @@ wait_for_input: false      # the recording manager's start key gates the episode
 seed: 0                    # reproducible jitter (seed + episode_index)
 
 start_center: null         # null + no home => capture the current follower TCP as center
+center_z_offset: 0.05      # lift the captured origin 5 cm up (start above the surface)
 
 start_jitter:
   x: 0.05                  # +- m

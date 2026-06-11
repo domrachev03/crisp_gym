@@ -56,6 +56,7 @@ class EpisodeSetupConfig:
     wait_for_input: bool = False           # pause for Enter before each episode
     seed: int | None = 0
     start_center: PoseTarget | None = None  # None -> capture follower home EE pose once
+    center_z_offset: float = 0.0            # lift the randomization origin by this many m
     start_jitter: StartJitter = field(default_factory=StartJitter)
 
     @classmethod
@@ -71,7 +72,7 @@ class EpisodeSetupConfig:
         jit = data.get("start_jitter") or {}
         jitter = StartJitter(**{k: jit[k] for k in ("x", "y", "z", "yaw_deg") if k in jit})
         known = {"enabled", "home_before_first", "move_speed", "retract_z_offset",
-                 "final_settle_s", "wait_for_input", "seed"}
+                 "final_settle_s", "wait_for_input", "seed", "center_z_offset"}
         kwargs = {k: data[k] for k in known if k in data}
         return cls(start_center=center, start_jitter=jitter, **kwargs)
 
@@ -113,14 +114,23 @@ class EpisodeSetupRunner:
         self.robot = robot
         self.config = config
         self._pose_factory = pose_factory or _default_pose_factory
-        self._center: PoseTarget | None = config.start_center
+        self._center: PoseTarget | None = None
 
     def _ensure_center(self) -> None:
-        if self._center is None:
+        if self._center is not None:
+            return
+        cfg = self.config
+        if cfg.start_center is not None:
+            pos = list(cfg.start_center.position)
+            quat = list(cfg.start_center.quaternion_xyzw)
+        else:
             p = self.robot.end_effector_pose
-            self._center = PoseTarget(position=np.asarray(p.position, dtype=float).tolist(),
-                                      quaternion_xyzw=p.orientation.as_quat().tolist())
-            logger.info(f"[setup] captured center from follower pose: {self._center.position}")
+            pos = np.asarray(p.position, dtype=float).tolist()
+            quat = p.orientation.as_quat().tolist()
+        pos[2] += cfg.center_z_offset  # lift the origin (e.g. start above the surface)
+        self._center = PoseTarget(position=pos, quaternion_xyzw=quat)
+        logger.info(f"[setup] randomization center: {np.round(self._center.position, 3).tolist()} "
+                    f"(z_offset {cfg.center_z_offset:+.3f}m)")
 
     def _move(self, pose: PoseTarget, label: str) -> None:
         logger.info(f"[setup] move to {label}: pos={np.round(pose.position, 3).tolist()}")
