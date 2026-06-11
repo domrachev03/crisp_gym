@@ -39,7 +39,7 @@ def main():  # noqa: C901
     p.add_argument("--repo-id", type=str, default="test/structured")
     p.add_argument("--tasks", type=str, nargs="+", default=["pick the lego block."])
     p.add_argument("--robot-type", type=str, default="panda")
-    p.add_argument("--fps", type=int, default=30, help="Record frame rate (cameras can do 60).")
+    p.add_argument("--fps", type=int, default=60, help="Record frame rate (RealSense run at this fps).")
     p.add_argument("--camera-fps", type=int, default=None, help="Camera fps (default: --fps).")
     p.add_argument("--num-episodes", type=int, default=50)
     p.add_argument("--resume", action="store_true", default=False)
@@ -61,8 +61,9 @@ def main():  # noqa: C901
                         "Unset = no per-episode repositioning.")
     p.add_argument("--signals", type=str, nargs="+", default=DEFAULT_SIGNALS,
                    help=f"High-rate signals to record. Available: {DEFAULT_SIGNALS}.")
-    p.add_argument("--hrate-overlap", type=float, default=2.0,
-                   help="Inter-frame gaps each hrate window covers (>=1 gives overlap).")
+    p.add_argument("--hrate-overlap", type=float, default=7.15,
+                   help="Inter-frame gaps each hrate window covers. Window = ceil(rate*overlap/fps); "
+                        "7.15 keeps the ft window ~250 samples at 60 fps (it scales 1/fps).")
     p.add_argument("--topic-template", type=str, default="/{ns}/{topic}")
     p.add_argument("--camera-config", type=str, default="realsense_rig",
                    help="Camera config under cameras/, or 'none'.")
