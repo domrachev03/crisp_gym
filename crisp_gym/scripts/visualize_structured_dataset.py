@@ -24,8 +24,6 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 logger = logging.getLogger(__name__)
 
-_FT_COMPONENTS = ["fx", "fy", "fz", "tx", "ty", "tz"]
-
 
 def _chw_to_hwc_u8(t: torch.Tensor) -> np.ndarray:
     if t.dtype == torch.float32:
@@ -45,8 +43,8 @@ def visualize_structured(
 
     cam_keys = [k for k in feats if k.startswith("observation.images.")]
     state_keys = [k for k in feats if k.startswith("observation.") and k.endswith("_state")]
-    ft_keys = [k for k in feats if k.startswith("observation.") and k.endswith("_ft")]
-    logger.info(f"cameras={cam_keys} state={state_keys} ft={ft_keys}")
+    hrate_keys = [k for k in feats if k.startswith("observation.") and k.endswith("_hrate")]
+    logger.info(f"cameras={cam_keys} state={state_keys} hrate={hrate_keys}")
 
     rr.init(f"{repo_id}/episode_{episode_index}", spawn=not save)
 
@@ -67,11 +65,12 @@ def visualize_structured(
             for n, v in zip(names, vals):
                 rr.log(f"{short}/{n}", rr.Scalar(float(v)))
 
-        for fk in ft_keys:
-            short = fk.split(".")[-1]
-            arr = np.asarray(frame[fk])
+        for hk in hrate_keys:
+            short = hk.split(".")[-1]
+            arr = np.asarray(frame[hk])
             latest = arr[-1] if arr.ndim == 2 else arr  # most recent hrate sample
-            for n, v in zip(_FT_COMPONENTS, latest):
+            comp = feats[hk].get("names") or [str(i) for i in range(len(latest))]
+            for n, v in zip(comp, latest):
                 rr.log(f"{short}/{n}", rr.Scalar(float(v)))
 
         if "action" in frame:

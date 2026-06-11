@@ -32,6 +32,12 @@ class RecordingManagerConfig:
     queue_size: int = 16
     writer_timeout: float = 10.0
 
+    # Async image writing (decouples per-frame image saves from the record loop so
+    # high-fps recording is not blocked by synchronous PNG writes). Use THREADS only:
+    # image_writer_processes>0 forks after rclpy's executor thread and deadlocks.
+    image_writer_threads: int = 8
+    image_writer_processes: int = 0
+
     @classmethod
     def from_yaml(cls, yaml_path: Path | str, **overrides) -> "RecordingManagerConfig":  # noqa: ANN003
         """Create a RecordingManagerConfig from a YAML file.

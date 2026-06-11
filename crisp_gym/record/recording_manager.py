@@ -161,6 +161,8 @@ class RecordingManager(ABC):
                 robot_type=self.config.robot_type,
                 features=self.config.features,
                 use_videos=True,
+                image_writer_threads=self.config.image_writer_threads,
+                image_writer_processes=self.config.image_writer_processes,
             )
             logger.debug(f"Dataset created with meta: {dataset.meta}")
         return dataset

@@ -1,4 +1,4 @@
-"""Unit tests for the structured recording schema + state assembly (no ROS)."""
+"""Unit tests for the structured recording schema + hrate sizing + state assembly (no ROS)."""
 import numpy as np
 import pytest
 
@@ -47,31 +47,54 @@ class _Leader:
     gripper = _Gripper()
 
 
+def test_hrate_window_sizing():
+    # window covers `overlap` inter-frame gaps: ceil(rate * overlap / fps)
+    assert sr.hrate_window(2100, 30, 2.0) == 140
+    assert sr.hrate_window(1000, 30, 2.0) == 67
+    assert sr.hrate_window(250, 60, 2.0) == 9
+    assert sr.hrate_window(2100, 60, 2.0) == 70
+    assert sr.hrate_window(2100, 60, 0.0) == 1  # never zero
+
+
+def test_build_hrate_specs():
+    specs = sr.build_hrate_specs({"follower": "right", "leader": "left"},
+                                 ["ft", "joints"], fps=60, overlap_frames=2.0)
+    keys = {s[0] for s in specs}
+    assert keys == {"follower_ft", "follower_joints", "leader_ft", "leader_joints"}
+    bytopic = {s[0]: s[1] for s in specs}
+    assert bytopic["follower_ft"] == "/right/netft_data_unbiased_tcp"
+    assert bytopic["leader_joints"] == "/left/joint_states"
+
+
 def test_features_shapes_and_keys():
-    cams = [sr.CameraSpec("wrist", "sn1"), sr.CameraSpec("front", "sn2", 640, 480, 30)]
-    feats, names = sr.build_structured_features(_Env(), hrate_window=140, cameras=cams, include_target=True)
-    # state = 6 cart + 7 joints + 1 gripper + 6 target = 20
+    cams = [sr.CameraSpec("wrist", "sn1"), sr.CameraSpec("front", "sn2", 640, 480, 60)]
+    feats, names = sr.build_structured_features(
+        _Env(), cameras=cams, fps=60, signals=["ft", "joints", "pose", "twist"], include_target=True
+    )
     assert feats["observation.follower_state"]["shape"] == (20,)
     assert feats["observation.leader_state"]["shape"] == (20,)
-    assert feats["observation.follower_ft"]["shape"] == (140, 6)
-    assert feats["observation.leader_ft_time"]["shape"] == (140,)
+    # fps 60, overlap 2 -> ft 70x6, joints 34x7, pose 9x7, twist 9x6
+    assert feats["observation.follower_ft_hrate"]["shape"] == (70, 6)
+    assert feats["observation.follower_joints_hrate"]["shape"] == (34, 7)
+    assert feats["observation.leader_pose_hrate"]["shape"] == (9, 7)
+    assert feats["observation.leader_twist_hrate"]["shape"] == (9, 6)
+    assert feats["observation.follower_ft_hrate_time"]["shape"] == (70,)
     assert feats["observation.images.wrist"]["shape"] == (480, 640, 3)
-    assert feats["observation.images.front"]["dtype"] == "video"
+    assert feats["observation.images.front"]["video_info"]["video.fps"] == 60.0
     assert feats["action"]["shape"] == (7,)
     assert len(names) == 20
-    assert "observation.state" not in feats  # structured schema omits the flat vector
+    assert "observation.state" not in feats
 
 
-def test_features_no_target_is_14():
-    feats, names = sr.build_structured_features(_Env(), 100, [], include_target=False)
-    assert feats["observation.follower_state"]["shape"] == (14,)
-    assert len(names) == 14
+def test_features_subset_signals():
+    feats, _ = sr.build_structured_features(_Env(), cameras=[], fps=30, signals=["ft"])
+    hrate_keys = [k for k in feats if k.endswith("_hrate")]
+    assert set(hrate_keys) == {"observation.follower_ft_hrate", "observation.leader_ft_hrate"}
 
 
 def test_leader_state_assembly_order():
     s = sr.leader_state(_Leader(), _Env(), include_target=True)
     assert s.dtype == np.float32
-    # cart(6) joints(7) gripper(1) target(6)
     np.testing.assert_allclose(s[:6], [1, 2, 3, 0.1, 0.2, 0.3], rtol=1e-5)
     np.testing.assert_allclose(s[6:13], np.arange(1, 8), rtol=1e-5)
     assert s[13] == pytest.approx(0.5)
@@ -87,7 +110,7 @@ def test_leader_state_tolerates_missing_gripper():
     leader = _Leader()
     leader.gripper = _BadGripper()
     s = sr.leader_state(leader, _Env(), include_target=True)
-    assert s[13] == 0.0  # gripper fell back to 0
+    assert s[13] == 0.0
 
 
 def test_follower_state_from_obs():

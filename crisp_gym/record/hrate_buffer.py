@@ -31,8 +31,10 @@ class HrateRingBuffer:
         self.dof = int(dof)
         self._buf: deque[tuple[float, NDArray]] = deque(maxlen=max(1, self.window * oversize))
 
-    def append(self, t: float, value: NDArray) -> None:
-        self._buf.append((float(t), np.asarray(value, dtype=float).copy()))
+    def append(self, t: float, value) -> None:  # noqa: ANN001
+        # Hot path (runs at the sensor's native kHz rate): store the raw value
+        # cheaply (no per-sample numpy alloc) and defer array building to snapshot.
+        self._buf.append((t, value))
 
     def snapshot(self, t_ref: float) -> tuple[NDArray, NDArray]:
         """Latest ``window`` samples as (values (N, dof), times (N,) - t_ref).
@@ -44,10 +46,10 @@ class HrateRingBuffer:
         if n == 0:
             return np.zeros((0, self.dof)), np.zeros((0,))
         items = list(self._buf)[-n:]
+        m = len(items)
         values = np.zeros((n, self.dof))
         times = np.zeros(n)
-        offset = n - len(items)
-        for j, (t, v) in enumerate(items):
-            values[offset + j] = v
-            times[offset + j] = t - t_ref
+        if m:
+            values[n - m:] = np.array([it[1] for it in items], dtype=float)
+            times[n - m:] = np.fromiter((it[0] for it in items), dtype=float, count=m) - t_ref
         return values, times

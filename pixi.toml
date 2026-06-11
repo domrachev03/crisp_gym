@@ -61,18 +61,8 @@ numpy = ">=1.26,<2.3"
 lerobot = { path = "../../huggingface/lerobot", editable = true }
 pyrealsense2 = ">=2.54.1"
 
-[feature.humble]
-channels = ["https://prefix.dev/robostack-humble"]
-
-[feature.humble.dependencies]
-python = "3.11.*"
-ros-humble-desktop = "*"
-colcon-common-extensions = "*"
-ros-humble-ros2-control = "*"
-ros-humble-ros2-controllers = "*"
-rosdep = "*"
-ros-humble-rmw-cyclonedds-cpp = "*"
-ros-humble-image-transport-plugins = "*"
+# Humble feature removed — this rig is jazzy-only. Restore from upstream if a
+# ROS2 Humble target is ever needed.
 
 [feature.jazzy]
 channels = ["https://prefix.dev/robostack-jazzy"]
