@@ -1,0 +1,27 @@
+# Position-force, ROLES REVERSED: leader=RIGHT (the arm with the franka gripper),
+# follower=LEFT (no gripper). Same control law as pf; namespaces, leader config and
+# NetFT topics are swapped. The right gripper is actuated out-of-band (it holds the
+# peg); the left follower has no gripper so the recorded gripper action is 0.
+scheme: pf_reverse
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: false
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 1.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
+
+# swapped wiring (leader=right, follower=left)
+follower_wrench_topic: /left/netft_data_unbiased_tcp
+leader_wrench_topic: /right/netft_data_unbiased_tcp
+leader_config: right_leader_nogripper
+leader_namespace: right
+follower_namespace: left
+follower_env_config: panda_no_cam

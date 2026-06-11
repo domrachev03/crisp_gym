@@ -26,7 +26,16 @@ EXPECTED = {
     "pfpf_tdpa":  (True,  True,  True,  True,  "cartesian"),
     "ppf":        (True,  False, True,  False, "cartesian"),
     "joint_pf":   (True,  False, False, False, "joint"),
+    "pf_reverse": (True,  False, False, False, "cartesian"),
 }
+
+
+def test_pf_reverse_swaps_roles():
+    cfg = BilateralConfig.from_yaml(CONFIG_DIR / "pf_reverse.yaml")
+    assert cfg.leader_namespace == "right" and cfg.follower_namespace == "left"
+    assert cfg.leader_wrench_topic == "/right/netft_data_unbiased_tcp"
+    assert cfg.follower_wrench_topic == "/left/netft_data_unbiased_tcp"
+    assert cfg.leader_config == "right_leader_nogripper"
 
 
 @pytest.mark.parametrize("scheme", list(EXPECTED))
