@@ -307,7 +307,19 @@ class RecordingManager(ABC):
         while self.state == "recording":
             frame_start = time.time()
 
-            obs, action = data_fn()
+            try:
+                obs, action = data_fn()
+            except Exception as e:  # noqa: BLE001 -- nullify the episode, keep the session alive
+                logger.error(
+                    f"Data function failed ({type(e).__name__}: {e}). "
+                    "Nullifying this episode (discarded) and returning to wait."
+                )
+                self.queue.put({"type": "DELETE_EPISODE"})
+                if on_end:
+                    on_end()
+                self.state = "to_be_deleted"
+                self._set_to_wait()
+                return
 
             if obs is None or action is None:
                 logger.debug("Data function returned None, skipping frame.")

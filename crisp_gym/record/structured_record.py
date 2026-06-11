@@ -203,12 +203,20 @@ def load_camera_specs(config_name: str) -> list[CameraSpec]:
 
 
 class CameraReader:
-    """Connects LeRobot RealSenseCamera objects and reads frames per step."""
+    """Connects LeRobot RealSenseCamera objects and reads frames per step.
 
-    def __init__(self, specs: list[CameraSpec]) -> None:
+    A read that times out raises (RealSense ``async_read`` TimeoutError). The recording
+    manager catches it and DISCARDS the current episode rather than crashing the run --
+    a dropped camera frame nullifies that episode, the session continues. The per-read
+    timeout is a little more tolerant than LeRobot's 200 ms default to avoid nullifying
+    an episode over a single slightly-late frame.
+    """
+
+    def __init__(self, specs: list[CameraSpec], read_timeout_ms: int = 300) -> None:
         from lerobot.cameras.realsense import RealSenseCamera, RealSenseCameraConfig
 
         self.specs = specs
+        self.read_timeout_ms = read_timeout_ms
         self.cameras: dict[str, object] = {}
         for s in specs:
             cfg = RealSenseCameraConfig(
@@ -221,7 +229,7 @@ class CameraReader:
 
     def read(self) -> dict[str, np.ndarray]:
         return {
-            f"observation.images.{name}": np.asarray(cam.async_read())
+            f"observation.images.{name}": np.asarray(cam.async_read(timeout_ms=self.read_timeout_ms))
             for name, cam in self.cameras.items()
         }
 
