@@ -83,3 +83,12 @@ crisp_python = { path = "../crisp_py", editable = true }
 
 [tasks]
 configure = "bash scripts/configure.sh"
+
+# Headless recording triggers (the 'ros' recording manager listens on /record_transition).
+# Use from a second ssh terminal while crisp-record-structured --recording-manager-type ros runs.
+# rec-go toggles: start the episode, then run it again to stop/pause it.
+[feature.jazzy.tasks]
+rec-go = "ros2 topic pub --once /record_transition std_msgs/msg/String '{data: record}'"
+rec-save = "ros2 topic pub --once /record_transition std_msgs/msg/String '{data: save}'"
+rec-delete = "ros2 topic pub --once /record_transition std_msgs/msg/String '{data: delete}'"
+rec-exit = "ros2 topic pub --once /record_transition std_msgs/msg/String '{data: exit}'"
