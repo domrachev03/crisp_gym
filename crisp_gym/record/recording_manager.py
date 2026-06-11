@@ -199,10 +199,12 @@ class RecordingManager(ABC):
                             else:
                                 frame[feature_name] = value
 
-                    # Concatenate state vector
-                    frame["observation.state"] = concatenate_state_features(
-                        obs, self.config.features
-                    )
+                    # Concatenate state vector (only for the flat schema; structured
+                    # schemas provide their own observation.* keys and omit this).
+                    if "observation.state" in self.config.features:
+                        frame["observation.state"] = concatenate_state_features(
+                            obs, self.config.features
+                        )
 
                     logger.debug(f"Constructed frame with keys: {frame.keys()}")
                     if _ADD_FRAME_HAS_TASK:  # For lerobot versions with explicit `task` parameter (>= v3.0)
