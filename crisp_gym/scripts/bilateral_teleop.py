@@ -82,7 +82,7 @@ def main() -> None:
     env = make_env(config.follower_env_config, control_type=control_type,
                    namespace=config.follower_namespace)
     env.wait_until_ready()
-    env.home(home_config=HomeConfig.CLOSE_TO_TABLE)
+    env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=0.0))
     env.reset()
 
     controller = build_bilateral_controller(env, leader, config, dt=dt)
