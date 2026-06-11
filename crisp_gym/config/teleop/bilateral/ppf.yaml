@@ -22,3 +22,4 @@ contact_threshold_n: 1.0
 reflect_deadband_n: 2.0
 reflect_highpass_hz: 0.0
 position_spring_k: 100.0
+rot_spring_k: 3.0   # rotational spring (N*m/rad); small vs translational k

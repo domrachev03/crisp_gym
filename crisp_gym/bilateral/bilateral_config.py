@@ -50,8 +50,12 @@ class BilateralConfig:
     # 4-channel forward-force gain (leader wrench -> follower ff); None = use feedback_gain
     force_fwd_gain: float | None = None
 
-    # 4-channel position spring stiffness (N/m), leader pulled toward follower
+    # 4-channel position spring stiffness, leader pulled toward follower.
+    # position_spring_k is translational (N/m); rot_spring_k is rotational (N*m/rad)
+    # and MUST be far smaller -- a translational k applied to a rotvec difference is
+    # an enormous yaw torque (resists rotation, diverges). 0 disables the rot spring.
     position_spring_k: float = 0.0
+    rot_spring_k: float = 0.0
 
     # wiring
     follower_wrench_topic: str = "/right/netft_data_unbiased_tcp"

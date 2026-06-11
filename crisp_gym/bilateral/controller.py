@@ -98,6 +98,13 @@ class BilateralController:
                      if config.tdpa else None)
         self.reflect_hp = FirstOrderHighPass(config.reflect_highpass_hz, self.dof, self.dt)
 
+        # per-axis spring stiffness: translation uses position_spring_k, rotation
+        # uses the (much smaller) rot_spring_k. For a 6-vec cartesian world-delta the
+        # last 3 axes are the rotation vector; other dofs (joint, sim) are uniform.
+        self._spring_k = np.full(self.dof, config.position_spring_k)
+        if self.dof == 6:
+            self._spring_k[3:] = config.rot_spring_k
+
         self._prev_leader = self.leader_home.copy()         # relative increment anchor
         self._follower_target = self.follower_home.copy()   # relative integrated target
         self._step = 0
@@ -173,7 +180,7 @@ class BilateralController:
         if self.ch_back_pos is not None:
             self.ch_back_pos.send(follower_pos)
             fp = self.ch_back_pos.receive()
-            spring = cfg.position_spring_k * (fp - leader_pos)
+            spring = self._spring_k * (fp - leader_pos)  # translation vs rotation gain
 
         leader_ff = reflected + spring
         if human_force is not None:

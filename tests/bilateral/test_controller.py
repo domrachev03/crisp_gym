@@ -118,6 +118,20 @@ def test_pfpf_position_spring_pulls_leader_toward_follower():
     assert np.max(log["leader_pos"]) > 0.01              # leader actually moved +x
 
 
+def test_spring_uses_separate_rotational_gain():
+    # 6-vec cartesian world-delta [tx,ty,tz, rx,ry,rz]: translation must use
+    # position_spring_k, rotation the (small) rot_spring_k -- not the same huge k
+    # (that yaw torque is what diverged ppf on hardware).
+    leader, follower = _pair(dof=6, wall=False, leader_x0=np.zeros(6),
+                             follower_x0=np.array([0.1, 0, 0, 0.2, 0, 0]))
+    cfg = BilateralConfig(scheme="ppf", force=False, pos_spring=True, tdpa=False,
+                          delay_steps=0, position_spring_k=100.0, rot_spring_k=5.0)
+    ctrl = BilateralController(leader, follower, cfg, dt=1e-3)
+    tel = ctrl.step(dt=1e-3, human_force=None)
+    assert np.isclose(tel.spring_force[0], 10.0, atol=1e-6)   # 100 N/m * 0.1
+    assert np.isclose(tel.spring_force[3], 1.0, atol=1e-6)    # 5 N*m/rad * 0.2
+
+
 def test_forward_force_is_clamped_to_max():
     # a large leader wrench must NOT inject an unbounded force into the follower
     # (the 64 N spike that diverged pfpf on hardware)

@@ -27,6 +27,10 @@ from crisp_gym.bilateral.crisp_adapter import (
     pose_to_vec,
     vec_to_pose,
 )
+from crisp_gym.config.path import find_config
+
+# Follower cartesian impedance loaded for bilateral teleop (lowered rotational PD).
+FOLLOWER_CARTESIAN_IMPEDANCE = "control/teleop_cartesian_impedance.yaml"
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +103,16 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         if config.force_fwd or config.tdpa:
             # leader netft (already unbiased) ~ human applied force; no extra bias
             leader_wrench_fn = _subscribe_wrench(leader_robot.node, config.leader_wrench_topic, 0.0)
+
+        # lower the follower's cartesian rotational PD for teleop (stiff/undamped
+        # yaw was hard to rotate and diverged); translation gains unchanged.
+        cart_cfg = find_config(FOLLOWER_CARTESIAN_IMPEDANCE)
+        if cart_cfg is not None:
+            try:
+                follower_robot.cartesian_controller_parameters_client.load_param_config(cart_cfg)
+                logger.info(f"Loaded follower cartesian impedance: {FOLLOWER_CARTESIAN_IMPEDANCE}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Could not load follower cartesian impedance: {e}")
 
         leader_adapter = CrispCartesianAdapter(leader_robot, leader_home, wrench_fn=leader_wrench_fn)
         follower_adapter = CrispCartesianAdapter(follower_robot, follower_home, wrench_fn=follower_wrench_fn)
