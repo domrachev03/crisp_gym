@@ -141,10 +141,18 @@ class BilateralController:
         self.follower.set_target_position(commanded)
 
         # --- forward force (4-ch): leader wrench -> follower feed-forward --------
+        # Clamped (parity with the reflected force) so a leader-wrench spike cannot
+        # inject an unbounded force into the follower. NOTE: on a directly-held,
+        # backdrivable master the NetFT reads the reaction to the leader's own
+        # feed-forward, so combining force_fwd with pos_spring closes a positive
+        # feedback loop (forward_force ~ spring -> drives follower apart -> grows
+        # spring) that diverges with no contact. Prefer 'ppf' (spring, no force_fwd)
+        # on such a rig; the clamp here only bounds the runaway, it does not cure it.
         forward_force = np.zeros(self.dof)
         if self.ch_fwd_force is not None:
-            self.ch_fwd_force.send(leader_w)
-            forward_force = cfg.feedback_gain * self.ch_fwd_force.receive()
+            fwd_gain = cfg.force_fwd_gain if cfg.force_fwd_gain is not None else cfg.feedback_gain
+            self.ch_fwd_force.send(fwd_gain * leader_w)
+            forward_force = self._clamp_force(self.ch_fwd_force.receive())
             self.follower.set_feedforward_force(forward_force)
 
         # --- return force: follower wrench -> leader feed-forward ---------------

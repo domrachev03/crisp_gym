@@ -24,6 +24,7 @@ EXPECTED = {
     "pf_tdpa":    (True,  False, False, True,  "cartesian"),
     "pfpf":       (True,  True,  True,  False, "cartesian"),
     "pfpf_tdpa":  (True,  True,  True,  True,  "cartesian"),
+    "ppf":        (True,  False, True,  False, "cartesian"),
     "joint_pf":   (True,  False, False, False, "joint"),
 }
 

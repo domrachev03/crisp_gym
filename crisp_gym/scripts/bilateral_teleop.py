@@ -61,6 +61,8 @@ def parse_args() -> argparse.Namespace:
                    help="Override the scheme's reflected-force gain.")
     p.add_argument("--position-spring-k", type=float, default=None,
                    help="Override the 4-channel return position-spring stiffness (N/m).")
+    p.add_argument("--force-fwd-gain", type=float, default=None,
+                   help="Override the 4-channel forward-force gain (leader wrench -> follower ff).")
     p.add_argument("--control-frequency", type=float, default=None,
                    help="Override the scheme's control frequency (Hz).")
     p.add_argument("--leader-config", type=str, default=None,
@@ -88,6 +90,8 @@ def main() -> None:
         overrides["feedback_gain"] = args.feedback_gain
     if args.position_spring_k is not None:
         overrides["position_spring_k"] = args.position_spring_k
+    if args.force_fwd_gain is not None:
+        overrides["force_fwd_gain"] = args.force_fwd_gain
     if args.control_frequency is not None:
         overrides["control_frequency"] = args.control_frequency
     if args.leader_config is not None:

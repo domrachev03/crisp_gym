@@ -1,0 +1,24 @@
+# Position / position-force (P-PF): position forward, force + position spring back.
+#  - forward position: leader pose -> follower target
+#  - return force:     follower wrench -> leader feed-forward
+#  - return position:  follower pose  -> leader position spring (k = position_spring_k)
+# NO forward-force channel: stable on a directly-held backdrivable master (unlike
+# pfpf, whose forward force closes a positive feedback loop through the master NetFT).
+# This is the 4-channel "feel" (two-way coupling + return-to-follower spring) WITHOUT
+# the diverging forward path. Tune position_spring_k on HW (start gentle).
+scheme: ppf
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: true
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 1.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
+position_spring_k: 100.0

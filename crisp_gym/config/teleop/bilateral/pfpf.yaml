@@ -1,9 +1,13 @@
 # 4-channel (PF-PF): position + force exchanged BOTH ways.
 #  - forward position: leader pose -> follower target
 #  - return force:     follower wrench -> leader feed-forward
-#  - forward force:    leader wrench  -> follower feed-forward
+#  - forward force:    leader wrench  -> follower feed-forward (gain = force_fwd_gain)
 #  - return position:  follower pose  -> leader position spring (k = position_spring_k)
-# position_spring_k is a gentle starting value; tune on HW (experiment E4).
+# WARNING (HW 2026-06-11): on a directly-held backdrivable master the forward-force
+# channel + spring form a positive feedback loop (master NetFT reads the reaction to
+# its own feed-forward) that DIVERGES with no contact. force_fwd_gain is lowered and
+# the forward force is clamped, but this only bounds it. For a directly-held master
+# prefer 'ppf' (no forward force). Use pfpf only with a low force_fwd_gain.
 scheme: pfpf
 mode: cartesian
 coupling: absolute
@@ -16,6 +20,7 @@ delay_steps: 0
 feedback_gain: 1.0
 feedback_sign: 1.0
 feedback_max_force: 20.0
+force_fwd_gain: 0.3
 contact_threshold_n: 1.0
 reflect_deadband_n: 2.0
 reflect_highpass_hz: 0.0

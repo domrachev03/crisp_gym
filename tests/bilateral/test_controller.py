@@ -118,6 +118,27 @@ def test_pfpf_position_spring_pulls_leader_toward_follower():
     assert np.max(log["leader_pos"]) > 0.01              # leader actually moved +x
 
 
+def test_forward_force_is_clamped_to_max():
+    # a large leader wrench must NOT inject an unbounded force into the follower
+    # (the 64 N spike that diverged pfpf on hardware)
+    leader, follower = _pair(wall=False, leader_env=lambda pos: np.array([100.0]))
+    cfg = BilateralConfig(scheme="pfpf", force_fwd=True, force_fwd_gain=1.0,
+                          feedback_max_force=20.0, delay_steps=0)
+    ctrl = BilateralController(leader, follower, cfg, dt=1e-3)
+    log = _run(ctrl, leader, follower, hf=np.array([0.0]), n=20, dt=1e-3)
+    fwd = np.array([abs(t.forward_force[0]) for t in log["tels"]])
+    assert fwd.max() <= 20.0 + 1e-6
+
+
+def test_force_fwd_gain_scales_forward_force():
+    leader, follower = _pair(wall=False, leader_env=lambda pos: np.array([4.0]))
+    cfg = BilateralConfig(scheme="pfpf", force_fwd=True, force_fwd_gain=0.5,
+                          feedback_max_force=20.0, delay_steps=0)
+    ctrl = BilateralController(leader, follower, cfg, dt=1e-3)
+    log = _run(ctrl, leader, follower, hf=np.array([0.0]), n=20, dt=1e-3)
+    assert np.isclose(log["tels"][-1].forward_force[0], 2.0, atol=1e-6)  # 0.5 * 4 N
+
+
 # --- joint 1:1 --------------------------------------------------------------- #
 def test_joint_pf_follower_tracks_leader():
     q_des = np.array([0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7])

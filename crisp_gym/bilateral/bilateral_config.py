@@ -47,6 +47,9 @@ class BilateralConfig:
     reflect_highpass_hz: float = 0.0
     reflect_deadband_n: float = 0.0
 
+    # 4-channel forward-force gain (leader wrench -> follower ff); None = use feedback_gain
+    force_fwd_gain: float | None = None
+
     # 4-channel position spring stiffness (N/m), leader pulled toward follower
     position_spring_k: float = 0.0
 
