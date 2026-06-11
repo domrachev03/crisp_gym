@@ -417,14 +417,33 @@ class ROSRecordingManager(RecordingManager):
         )
         logger.debug("ROS2 node created and subscriber initialized.")
 
-        threading.Thread(target=self._spin_node, daemon=True).start()
+        self._spin_stop = threading.Event()
+        self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+        self._spin_thread.start()
 
     def _spin_node(self):
-        """Spin the ROS2 node in a separate thread."""
+        """Spin the ROS2 node in a separate thread until asked to stop."""
         executor = SingleThreadedExecutor()
         executor.add_node(self.node)
-        while rclpy.ok():
-            executor.spin_once(timeout_sec=0.1)
+        while rclpy.ok() and not self._spin_stop.is_set():
+            try:
+                executor.spin_once(timeout_sec=0.1)
+            except Exception:  # noqa: BLE001  (benign teardown race on shutdown)
+                break
+        try:
+            executor.remove_node(self.node)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:  # noqa: ANN001, D105
+        """Stop the spin thread + destroy the node before the writer/rclpy teardown."""
+        self._spin_stop.set()
+        self._spin_thread.join(timeout=2.0)
+        try:
+            self.node.destroy_node()
+        except Exception:  # noqa: BLE001
+            pass
+        super().__exit__(exc_type, exc_value, traceback)
 
     @override
     def get_instructions(self) -> str:
