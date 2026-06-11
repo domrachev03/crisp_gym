@@ -45,7 +45,10 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--follower-namespace", type=str, default=None)
     p.add_argument("--follower-config", type=str, default=None,
                    help="Override the scheme's follower env config name.")
-    p.add_argument("--log", type=str, default=None, help="Path to write telemetry JSONL.")
+    p.add_argument("--log", type=str, default=None,
+                   help="Telemetry JSONL path (default: /tmp/bilateral_<scheme>.jsonl).")
+    p.add_argument("--no-log", dest="no_log", action="store_true", default=False,
+                   help="Disable telemetry logging.")
     p.add_argument("--log-level", type=str, default="INFO")
     return p.parse_args()
 
@@ -86,28 +89,34 @@ def main() -> None:
     env.reset()
 
     controller = build_bilateral_controller(env, leader, config, dt=dt)
-    telem = TeleopLogger() if args.log else None
+    log_path = None if args.no_log else (args.log or f"/tmp/bilateral_{config.scheme}.jsonl")
+    telem = TeleopLogger() if log_path else None
 
-    logger.info(f":rocket: Bilateral teleop scheme={config.scheme} dt={dt:.4f}s. Ctrl-C to stop.")
+    logger.info(f":rocket: Bilateral teleop scheme={config.scheme} dt={dt:.4f}s "
+                f"log={log_path}. Ctrl-C to stop.")
     t0 = time.monotonic()
     try:
         while True:
             t_loop = time.monotonic()
             tel = controller.step(dt=dt, human_force=None)  # human pushes the leader physically
             if telem is not None:
+                # full telemetry per tick so any scheme is analyzable offline
                 telem.log(
                     step=tel.step, t=time.monotonic() - t0, t_mono=time.monotonic(),
                     leader_pos=tel.live_leader_pos, follower_pos=tel.live_follower_pos,
                     commanded_target=tel.commanded_follower_target,
-                    follower_wrench=tel.follower_wrench, reflected=tel.reflected_wrench,
+                    leader_feedforward=tel.leader_feedforward, reflected=tel.reflected_wrench,
+                    spring_force=tel.spring_force, forward_force=tel.forward_force,
+                    follower_wrench=tel.follower_wrench, leader_wrench=tel.leader_wrench,
+                    delay_steps=tel.delay_steps, control_dt=tel.control_dt,
                 )
             time.sleep(max(0.0, dt - (time.monotonic() - t_loop)))
     except KeyboardInterrupt:
         logger.info("Stopping.")
     finally:
-        if telem is not None and args.log:
-            telem.to_jsonl(args.log)
-            logger.info(f"Wrote telemetry: {args.log}")
+        if telem is not None and log_path:
+            telem.to_jsonl(log_path)
+            logger.info(f"Wrote telemetry: {log_path}")
 
 
 if __name__ == "__main__":
