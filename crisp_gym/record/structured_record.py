@@ -210,13 +210,15 @@ def load_camera_specs(config_name: str) -> list[CameraSpec]:
 
 
 class CameraReader:
-    """Connects LeRobot RealSenseCamera objects and reads frames per step.
+    """Connects LeRobot RealSenseCameras and serves the latest frame per step.
 
-    A read that times out raises (RealSense ``async_read`` TimeoutError). The recording
-    manager catches it and DISCARDS the current episode rather than crashing the run --
-    a dropped camera frame nullifies that episode, the session continues. The per-read
-    timeout is more tolerant than LeRobot's 200 ms default so a transient stall doesn't
-    nullify an episode over a single slightly-late frame.
+    LeRobot ``async_read`` BLOCKS until the next fresh frame (~1/fps); at 60 fps that
+    alone is ~16.7 ms -- the whole frame budget -- so the record loop can never sustain
+    60 fps. Instead a background poller per camera continuously grabs frames and stores
+    the latest; ``read()`` returns those instantly (no blocking), freeing the budget for
+    the control + hrate work. If a camera produces no frame for ``read_timeout_ms``,
+    ``read()`` raises so the recording manager nullifies (discards) that episode rather
+    than recording stale frames.
     """
 
     def __init__(self, specs: list[CameraSpec], read_timeout_ms: int = 600) -> None:
@@ -224,6 +226,7 @@ class CameraReader:
 
         self.specs = specs
         self.read_timeout_ms = read_timeout_ms
+        self._stale_s = read_timeout_ms / 1000.0
         self.cameras: dict[str, object] = {}
         for s in specs:
             cfg = RealSenseCameraConfig(
@@ -234,13 +237,49 @@ class CameraReader:
             self.cameras[s.name] = cam
             logger.info(f"Connected RealSense '{s.name}' (sn={s.serial}) {s.width}x{s.height}@{s.fps}")
 
+        self._latest: dict[str, np.ndarray | None] = {n: None for n in self.cameras}
+        self._last_t: dict[str, float] = {n: 0.0 for n in self.cameras}
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._threads = [threading.Thread(target=self._poll, args=(n, c), daemon=True)
+                         for n, c in self.cameras.items()]
+        for t in self._threads:
+            t.start()
+
+        # wait for the first frame from each camera so the first read() isn't "stale"
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            with self._lock:
+                if all(self._latest[n] is not None for n in self.cameras):
+                    break
+            time.sleep(0.02)
+
+    def _poll(self, name: str, cam) -> None:
+        while not self._stop.is_set():
+            try:
+                frame = np.asarray(cam.async_read(timeout_ms=self.read_timeout_ms))
+                with self._lock:
+                    self._latest[name] = frame
+                    self._last_t[name] = time.time()
+            except Exception:  # noqa: BLE001 -- transient stall; staleness is checked in read()
+                continue
+
     def read(self) -> dict[str, np.ndarray]:
-        return {
-            f"observation.images.{name}": np.asarray(cam.async_read(timeout_ms=self.read_timeout_ms))
-            for name, cam in self.cameras.items()
-        }
+        now = time.time()
+        out: dict[str, np.ndarray] = {}
+        with self._lock:
+            for name in self.cameras:
+                frame = self._latest[name]
+                if frame is None or (now - self._last_t[name]) > self._stale_s:
+                    raise TimeoutError(
+                        f"Camera '{name}' produced no frame within {self._stale_s:.2f}s")
+                out[f"observation.images.{name}"] = frame
+        return out
 
     def close(self) -> None:
+        self._stop.set()
+        for t in self._threads:
+            t.join(timeout=1.0)
         for cam in self.cameras.values():
             try:
                 cam.disconnect()
