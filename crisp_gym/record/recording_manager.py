@@ -134,7 +134,12 @@ class RecordingManager(ABC):
         logger.debug("Creating dataset object.")
         if self.config.resume:
             logger.info(f"Resuming recording from existing dataset: {self.config.repo_id}")
-            dataset = LeRobotDataset(repo_id=self.config.repo_id)
+            # resume() opens the dataset WRITABLE; plain LeRobotDataset(...) is read-only.
+            dataset = LeRobotDataset.resume(
+                repo_id=self.config.repo_id,
+                image_writer_threads=self.config.image_writer_threads,
+                image_writer_processes=self.config.image_writer_processes,
+            )
             if self.config.num_episodes <= dataset.num_episodes:
                 logger.error(
                     f"The dataset already has {dataset.num_episodes} recorded. Please select a larger number."
@@ -270,7 +275,7 @@ class RecordingManager(ABC):
                     logger.info("Shutting down writer process.")
                     break
             except Exception as e:
-                logger.exception("Error occured: ", e)
+                logger.exception(f"Error occured: {e}")
             finally:
                 pass
 
