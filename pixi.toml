@@ -60,6 +60,8 @@ numpy = ">=1.26,<2.3"
 # === Upstream HF lerobot 0.5.1 (numpy-patched), sibling clone ===
 lerobot = { path = "../../huggingface/lerobot", editable = true }
 pyrealsense2 = ">=2.54.1"
+fastapi = ">=0.110"
+uvicorn = ">=0.29"
 
 # Humble feature removed — this rig is jazzy-only. Restore from upstream if a
 # ROS2 Humble target is ever needed.

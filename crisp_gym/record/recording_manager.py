@@ -71,6 +71,11 @@ class RecordingManager(ABC):
 
         self.episode_count = 0
 
+        # live metrics for the dashboard (/record_status)
+        self.fps_measured = 0.0
+        self.frames_this_episode = 0
+        self.last_event = ""
+
         self.queue = mp.JoinableQueue(self.config.queue_size)
         self.episode_count_queue = mp.Queue(1)
         self.dataset_ready = mp.Event()
@@ -311,6 +316,7 @@ class RecordingManager(ABC):
             on_start()
 
         logger.info("Started recording episode.")
+        self.frames_this_episode = 0
 
         while self.state == "recording":
             frame_start = time.time()
@@ -323,6 +329,7 @@ class RecordingManager(ABC):
                     "Nullifying this episode (discarded) and returning to wait."
                 )
                 self.queue.put({"type": "DELETE_EPISODE"})
+                self.last_event = f"episode nullified ({type(e).__name__})"
                 if on_end:
                     on_end()
                 self.state = "to_be_deleted"
@@ -337,6 +344,10 @@ class RecordingManager(ABC):
                 continue
 
             self.queue.put({"type": "FRAME", "data": (obs, action, task)})
+            self.frames_this_episode += 1
+            dt = time.time() - frame_start
+            if dt > 0:  # EMA of the achieved loop rate (dashboard fps gauge)
+                self.fps_measured = 0.9 * self.fps_measured + 0.1 * (1.0 / dt) if self.fps_measured else 1.0 / dt
 
             sleep_time = 1 / self.config.fps - (time.time() - frame_start)
             if sleep_time > 0:
@@ -374,10 +385,12 @@ class RecordingManager(ABC):
             logger.info("Saving current episode.")
             self.queue.put({"type": "SAVE_EPISODE"})
             self.episode_count += 1
+            self.last_event = f"episode {self.episode_count} saved"
             self._set_to_wait()
         elif self.state == "to_be_deleted":
             logger.info("Deleting current episode.")
             self.queue.put({"type": "DELETE_EPISODE"})
+            self.last_event = "episode deleted"
             self._set_to_wait()
         elif self.state == "exit":
             pass
@@ -436,7 +449,25 @@ class ROSRecordingManager(RecordingManager):
         self._subscriber = self.node.create_subscription(
             String, "record_transition", self._callback_recording_trigger, 10
         )
+        # live status for the web dashboard (crisp-record-dashboard subscribes this)
+        self._status_pub = self.node.create_publisher(String, "record_status", 10)
+        self._status_timer = self.node.create_timer(0.1, self._publish_status)
         logger.debug("ROS2 node created and subscriber initialized.")
+
+    def _publish_status(self) -> None:
+        import json
+
+        msg = String()
+        msg.data = json.dumps({
+            "state": self.state,
+            "episode": self.episode_count,
+            "num_episodes": self.config.num_episodes,
+            "fps": round(self.fps_measured, 1),
+            "frames": self.frames_this_episode,
+            "repo_id": self.config.repo_id,
+            "last_event": self.last_event,
+        })
+        self._status_pub.publish(msg)
 
         self._spin_stop = threading.Event()
         self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
