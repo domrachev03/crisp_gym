@@ -251,8 +251,15 @@ def build_structured_features(
     overlap_frames: float = 2.0,
     include_target: bool = True,
     arms: tuple[str, str] = ("follower", "leader"),
+    bilateral_dof: int | None = None,
 ) -> tuple[dict, list[str]]:
-    """Construct the LeRobotDataset feature dict for the structured schema."""
+    """Construct the LeRobotDataset feature dict for the structured schema.
+
+    When ``bilateral_dof`` is given (the controller's generalized-coordinate
+    dimension: 6 cartesian, 7 joint), the bilateral telemetry fields are added and
+    the recorded ``action`` is the commanded follower target (+ gripper) rather than
+    the cartesian-delta action, so the dataset reflects what the teleop scheme drove.
+    """
     signals = signals if signals is not None else DEFAULT_SIGNALS
     cart = _cartesian_names(env)
     njoints = env.config.robot_config.num_joints()
@@ -287,7 +294,14 @@ def build_structured_features(
             "names": ["height", "width", "channels"], "video_info": video_info,
         }
 
-    feats["action"] = {"dtype": "float32", "shape": (len(cart) + 1,), "names": list(cart) + ["gripper"]}
+    if bilateral_dof is not None:
+        from crisp_gym.record.bilateral_frame import _component_names, bilateral_feature_specs
+
+        feats.update(bilateral_feature_specs(bilateral_dof))
+        act_names = _component_names(bilateral_dof) + ["gripper"]
+        feats["action"] = {"dtype": "float32", "shape": (bilateral_dof + 1,), "names": act_names}
+    else:
+        feats["action"] = {"dtype": "float32", "shape": (len(cart) + 1,), "names": list(cart) + ["gripper"]}
     return feats, state_names
 
 
@@ -379,6 +393,38 @@ def make_structured_sample_fn(env, leader, hrate: HrateManager, cams: CameraRead
         follower_obs = env._get_obs()
         obs = _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals, include_target)
         return obs, np.zeros(action_dim, dtype=np.float32)
+
+    return _fn
+
+
+def make_structured_bilateral_fn(env, leader, controller, hrate: HrateManager,
+                                 cams: CameraReader | None, signals: list[str] | None = None,
+                                 include_target: bool = True) -> Callable:
+    """Controller-driven frame producer for any bilateral scheme.
+
+    The ``BilateralController`` commands BOTH arms each tick (forward position,
+    reflected force, 4-channel force/spring, optional TDPA); we then read the
+    follower observation read-only and record both arms' structured state, the
+    high-rate windows, the cameras, and the control telemetry. The recorded action
+    is the commanded (DELAYED) follower target plus the gripper command.
+    """
+    from crisp_gym.record.bilateral_frame import bilateral_action, telemetry_obs_fields
+
+    signals = signals if signals is not None else DEFAULT_SIGNALS
+
+    def _fn() -> tuple:
+        t_ref = time.time()
+        tel = controller.step()             # commands leader + follower
+        follower_obs = env._get_obs()       # read-only: controller already commanded
+        obs = _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals, include_target)
+        obs.update(telemetry_obs_fields(tel))
+        gripper_action = _leader_gripper_to_action(
+            leader_value=leader.gripper.value if leader.gripper is not None else 0.0,
+            follower_value=env.gripper.value if env.gripper is not None else 0.0,
+            control_mode=env.config.gripper_mode,
+        )
+        action = bilateral_action(tel, gripper_action)
+        return obs, action
 
     return _fn
 

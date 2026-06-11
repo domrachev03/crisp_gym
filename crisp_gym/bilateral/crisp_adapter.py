@@ -46,6 +46,13 @@ def _rot_of_vec(vec: NDArray) -> Rotation:
     return Rotation.from_quat([vec[4], vec[5], vec[6], vec[3]])
 
 
+def vec_to_pose(vec: NDArray):
+    """``[x, y, z, qw, qx, qy, qz]`` -> crisp_py ``Pose`` (imports crisp_py lazily)."""
+    from crisp_py.robot import Pose
+
+    return Pose(position=np.asarray(vec[:3], dtype=float), orientation=_rot_of_vec(vec))
+
+
 class CrispCartesianAdapter:
     """World-frame, home-relative ``RobotInterface`` over a crisp_py robot (cartesian)."""
 
@@ -90,10 +97,7 @@ class CrispCartesianAdapter:
         self.robot.set_target_wrench(force=w_tcp[:3].tolist(), torque=w_tcp[3:].tolist())
 
     def _vec_to_pose(self, vec: NDArray):
-        from crisp_py.robot import Pose
-
-        return Pose(position=np.asarray(vec[:3], dtype=float),
-                    orientation=_rot_of_vec(vec))
+        return vec_to_pose(vec)
 
 
 class CrispJointAdapter:
