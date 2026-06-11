@@ -41,7 +41,7 @@ def main():  # noqa: C901
     p.add_argument("--push-to-hub", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--recording-manager-type", type=str, default="keyboard", choices=["keyboard", "ros"])
     p.add_argument("--follower-config", type=str, default="panda_no_cam")
-    p.add_argument("--leader-config", type=str, default="left_leader")
+    p.add_argument("--leader-config", type=str, default="left_leader_nogripper")
     p.add_argument("--follower-namespace", type=str, default="right")
     p.add_argument("--leader-namespace", type=str, default="left")
     p.add_argument("--signals", type=str, nargs="+", default=DEFAULT_SIGNALS,
