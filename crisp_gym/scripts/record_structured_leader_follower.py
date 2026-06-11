@@ -117,6 +117,14 @@ def main():  # noqa: C901
                 logger.warning("home-config-noise > 0 with a bilateral scheme: homes are "
                                "anchored once, so keep noise 0 for consistent coupling.")
 
+        # Episode-setup config (loaded early so we can decide whether to pre-home).
+        setup_cfg = None
+        if args.setup_config:
+            setup_path = find_config(f"setup/{args.setup_config}.yaml")
+            if setup_path is None:
+                raise ValueError(f"Setup config not found: setup/{args.setup_config}.yaml")
+            setup_cfg = EpisodeSetupConfig.from_yaml(setup_path)
+
         features, _ = build_structured_features(
             env, cam_specs, args.fps, args.signals, args.hrate_overlap, args.include_target,
             bilateral_dof=bilateral_dof,
@@ -136,7 +144,13 @@ def main():  # noqa: C901
 
         leader.prepare_for_teleop()
         env.wait_until_ready()
-        env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
+        # Skip the pre-loop home when the setup uses the CURRENT follower TCP as the
+        # randomization origin (home_before_first=false) -- homing would move it away.
+        keep_current = setup_cfg is not None and setup_cfg.enabled and not setup_cfg.home_before_first
+        if keep_current:
+            logger.info("Setup origin = current follower TCP (skipping pre-loop home).")
+        else:
+            env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
         env.reset()
 
         # Build the bilateral controller once, with both arms at home (anchors the
@@ -147,11 +161,7 @@ def main():  # noqa: C901
 
         # Optional per-episode setup: randomized follower start + retract between episodes.
         setup_runner = None
-        if args.setup_config:
-            setup_path = find_config(f"setup/{args.setup_config}.yaml")
-            if setup_path is None:
-                raise ValueError(f"Setup config not found: setup/{args.setup_config}.yaml")
-            setup_cfg = EpisodeSetupConfig.from_yaml(setup_path)
+        if setup_cfg is not None:
             if setup_cfg.enabled:
                 setup_runner = EpisodeSetupRunner(env.robot, setup_cfg)
                 logger.info(f"Episode setup '{args.setup_config}': retract {setup_cfg.retract_z_offset}m, "
