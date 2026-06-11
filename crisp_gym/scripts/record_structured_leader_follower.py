@@ -15,6 +15,8 @@ import crisp_gym  # noqa: F401
 from crisp_gym.config.home import HomeConfig
 from crisp_gym.envs.manipulator_env import make_env
 from crisp_gym.record.recording_manager import make_recording_manager
+from crisp_gym.bilateral.bilateral_config import make_bilateral_config
+from crisp_gym.bilateral.runtime import build_bilateral_controller
 from crisp_gym.record.structured_record import (
     DEFAULT_SIGNALS,
     CameraReader,
@@ -22,6 +24,7 @@ from crisp_gym.record.structured_record import (
     build_hrate_specs,
     build_structured_features,
     load_camera_specs,
+    make_structured_bilateral_fn,
     make_structured_teleop_fn,
 )
 from crisp_gym.teleop.teleop_robot import make_leader
@@ -44,6 +47,13 @@ def main():  # noqa: C901
     p.add_argument("--leader-config", type=str, default="left_leader_nogripper")
     p.add_argument("--follower-namespace", type=str, default="right")
     p.add_argument("--leader-namespace", type=str, default="left")
+    p.add_argument("--teleop-scheme", type=str, default=None,
+                   help="Bilateral scheme (position|pf|pf_tdpa|pfpf|pfpf_tdpa|joint_pf). "
+                        "Unset = legacy position-only teleop fn.")
+    p.add_argument("--delay-steps", type=int, default=None,
+                   help="Override the scheme's artificial round-trip channel delay (control steps).")
+    p.add_argument("--feedback-gain", type=float, default=None,
+                   help="Override the scheme's reflected-force gain.")
     p.add_argument("--signals", type=str, nargs="+", default=DEFAULT_SIGNALS,
                    help=f"High-rate signals to record. Available: {DEFAULT_SIGNALS}.")
     p.add_argument("--hrate-overlap", type=float, default=2.0,
@@ -86,10 +96,28 @@ def main():  # noqa: C901
                 s.fps = cam_fps
             cams = CameraReader(cam_specs)
 
+        # Bilateral scheme (opt-in). When set, the dataset records the controller
+        # telemetry + a commanded-target action; dof = 7 joint, 6 cartesian.
+        bilateral_config = None
+        bilateral_dof = None
+        if args.teleop_scheme is not None:
+            overrides = {}
+            if args.delay_steps is not None:
+                overrides["delay_steps"] = args.delay_steps
+            if args.feedback_gain is not None:
+                overrides["feedback_gain"] = args.feedback_gain
+            bilateral_config = make_bilateral_config(args.teleop_scheme, **overrides)
+            bilateral_dof = 7 if bilateral_config.mode == "joint" else 6
+            if args.home_config_noise > 0.0:
+                logger.warning("home-config-noise > 0 with a bilateral scheme: homes are "
+                               "anchored once, so keep noise 0 for consistent coupling.")
+
         features, _ = build_structured_features(
-            env, cam_specs, args.fps, args.signals, args.hrate_overlap, args.include_target
+            env, cam_specs, args.fps, args.signals, args.hrate_overlap, args.include_target,
+            bilateral_dof=bilateral_dof,
         )
-        logger.info(f"Recording {len(features)} features at {args.fps} fps.")
+        logger.info(f"Recording {len(features)} features at {args.fps} fps "
+                    f"(scheme={args.teleop_scheme}).")
 
         rm = make_recording_manager(
             recording_manager_type=args.recording_manager_type,
@@ -105,6 +133,12 @@ def main():  # noqa: C901
         env.wait_until_ready()
         env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
         env.reset()
+
+        # Build the bilateral controller once, with both arms at home (anchors the
+        # home-relative coupling and subscribes the wrench topics a single time).
+        controller = None
+        if bilateral_config is not None:
+            controller = build_bilateral_controller(env, leader, bilateral_config)
 
         def on_start():
             env.robot.reset_targets()
@@ -130,9 +164,14 @@ def main():  # noqa: C901
         with rm:
             while not rm.done():
                 logger.info(f"→ Episode {rm.episode_count + 1} / {rm.num_episodes}")
-                teleop_fn = make_structured_teleop_fn(
-                    env, leader, hrate, cams, args.signals, args.include_target
-                )
+                if controller is not None:
+                    teleop_fn = make_structured_bilateral_fn(
+                        env, leader, controller, hrate, cams, args.signals, args.include_target
+                    )
+                else:
+                    teleop_fn = make_structured_teleop_fn(
+                        env, leader, hrate, cams, args.signals, args.include_target
+                    )
                 task = tasks[np.random.randint(0, len(tasks))] if tasks else "No task specified."
                 logger.info(f"▷ Task: {task}")
                 rm.record_episode(data_fn=teleop_fn, task=task, on_start=on_start, on_end=on_end)

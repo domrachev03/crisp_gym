@@ -1,0 +1,112 @@
+"""Hardware glue: build a ``BilateralController`` from a ``BilateralConfig``.
+
+Captures the leader/follower homes, wires the NetFT wrench subscriptions a scheme
+needs, builds the cartesian or joint adapters, switches the follower controller for
+joint mode, and holds the follower at home until the loop commands it. Both the
+standalone runner and the structured recorder call this so they drive an identical
+control law.
+
+ROS / crisp_py only — exercised on hardware, not in the dry-run test suite (the law
+and the adapter math are unit-tested separately against mocks).
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+
+import numpy as np
+from geometry_msgs.msg import WrenchStamped
+from rclpy.qos import qos_profile_sensor_data
+
+from crisp_gym.bilateral.bilateral_config import BilateralConfig
+from crisp_gym.bilateral.controller import BilateralController
+from crisp_gym.bilateral.crisp_adapter import (
+    CrispCartesianAdapter,
+    CrispJointAdapter,
+    pose_to_vec,
+    vec_to_pose,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _subscribe_wrench(node, topic: str, bias_seconds: float = 0.0):
+    """Subscribe to a NetFT ``WrenchStamped`` topic; return a getter of the live
+    (optionally bias-subtracted) TCP wrench ``(6,)``.
+
+    A non-zero ``bias_seconds`` averages the wrench at rest (keep the arm still) and
+    subtracts it — used for the follower so the free-space noise floor is nulled.
+    """
+    latest = np.zeros(6)
+
+    def _cb(msg: WrenchStamped) -> None:
+        w = msg.wrench
+        latest[:] = (w.force.x, w.force.y, w.force.z, w.torque.x, w.torque.y, w.torque.z)
+
+    node.create_subscription(WrenchStamped, topic, _cb, qos_profile_sensor_data)
+
+    bias = np.zeros(6)
+    if bias_seconds > 0.0:
+        logger.info(f"Capturing wrench bias on {topic} (keep arm still {bias_seconds:.1f}s)...")
+        samples = []
+        t_end = time.time() + bias_seconds
+        while time.time() < t_end:
+            samples.append(latest.copy())
+            time.sleep(0.02)
+        bias = np.mean(samples, axis=0) if samples else np.zeros(6)
+
+    return lambda: latest - bias
+
+
+def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float | None = None,
+                               bias_seconds: float = 1.0) -> BilateralController:
+    """Construct the controller for ``config`` against the live ``env`` + ``leader``.
+
+    Args:
+        env: a ManipulatorEnv whose ``.robot`` is the follower crisp_py robot.
+        leader: a TeleopRobot whose ``.robot`` is the leader crisp_py robot.
+        config: the bilateral scheme.
+        dt: control timestep (defaults to ``1 / config.control_frequency``).
+        bias_seconds: follower wrench bias capture duration.
+    """
+    follower_robot = env.robot
+    leader_robot = leader.robot
+    dt = dt if dt is not None else 1.0 / config.control_frequency
+
+    if config.mode == "joint":
+        leader_home = np.asarray(leader_robot.joint_values, dtype=float).copy()
+        follower_home = np.asarray(follower_robot.joint_values, dtype=float).copy()
+        follower_robot.controller_switcher_client.switch_controller("joint_impedance_controller")
+        if config.force:
+            logger.warning(
+                "joint_pf force reflection is recorded only: crisp has no joint-torque "
+                "streaming controller, so reflected joint effort is not rendered on the leader."
+            )
+        leader_adapter = CrispJointAdapter(leader_robot, leader_home)
+        follower_adapter = CrispJointAdapter(follower_robot, follower_home)
+        follower_robot.set_target_joint(follower_home)  # hold at home
+    else:
+        leader_home = pose_to_vec(leader_robot.end_effector_pose)
+        follower_home = pose_to_vec(follower_robot.end_effector_pose)
+
+        follower_wrench_fn = None
+        if config.force:
+            follower_wrench_fn = _subscribe_wrench(
+                follower_robot.node, config.follower_wrench_topic, bias_seconds
+            )
+        leader_wrench_fn = None
+        if config.force_fwd or config.tdpa:
+            # leader netft (already unbiased) ~ human applied force; no extra bias
+            leader_wrench_fn = _subscribe_wrench(leader_robot.node, config.leader_wrench_topic, 0.0)
+
+        leader_adapter = CrispCartesianAdapter(leader_robot, leader_home, wrench_fn=leader_wrench_fn)
+        follower_adapter = CrispCartesianAdapter(follower_robot, follower_home, wrench_fn=follower_wrench_fn)
+        follower_robot.set_target(pose=vec_to_pose(follower_home))  # hold at home
+
+    logger.info(
+        f"Bilateral controller: scheme={config.scheme} mode={config.mode} "
+        f"force={config.force} force_fwd={config.force_fwd} pos_spring={config.pos_spring} "
+        f"tdpa={config.tdpa} delay_steps={config.delay_steps}"
+    )
+    return BilateralController(leader_adapter, follower_adapter, config, dt=dt)
