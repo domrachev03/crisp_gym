@@ -1,0 +1,10 @@
+# Position-only teleop (no force reflection). Baseline / safest scheme.
+scheme: position
+mode: cartesian
+coupling: absolute
+force: false
+force_fwd: false
+pos_spring: false
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0

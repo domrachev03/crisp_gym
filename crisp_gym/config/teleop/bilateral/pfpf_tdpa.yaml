@@ -1,0 +1,18 @@
+# 4-channel (PF-PF) + TDPA. Full 4-channel coupling with the reflected force
+# passivated (master energy budget = leader wrench Fh). Stable contact under delay.
+scheme: pfpf_tdpa
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: true
+pos_spring: true
+tdpa: true
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 3.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
+position_spring_k: 150.0

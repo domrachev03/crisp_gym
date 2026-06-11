@@ -1,0 +1,17 @@
+# Position-force: leader pose -> follower target, follower wrench -> leader.
+# HW-validated scheme (gain 1.0, soft deadband to null the free-space noise floor).
+scheme: pf
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: false
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 1.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0

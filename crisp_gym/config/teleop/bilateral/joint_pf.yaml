@@ -1,0 +1,20 @@
+# Joint-to-joint 1:1 position-force. Identical leader/follower configs => direct
+# joint coupling; master homed first. EXPERIMENTAL: crisp has no dedicated
+# joint-impedance streaming controller; the follower runs joint_impedance_controller
+# and the bilateral controller must be the SOLE publisher of /<ns>/target_joint
+# (multiple publishers are dropped -> follower freezes). No TDPA in joint mode.
+scheme: joint_pf
+mode: joint
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: false
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 1.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
