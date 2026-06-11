@@ -22,11 +22,33 @@ from crisp_gym.bilateral.bilateral_config import make_bilateral_config
 from crisp_gym.bilateral.runtime import build_bilateral_controller
 from crisp_gym.bilateral.telemetry import TeleopLogger
 from crisp_gym.config.home import HomeConfig
+from crisp_gym.config.path import find_config
 from crisp_gym.envs.manipulator_env import make_env
 from crisp_gym.teleop.teleop_robot import make_leader
 from crisp_gym.util.setup_logger import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+def _hold_leader(leader) -> None:
+    """On shutdown, stiffen the leader at its current pose (disable freedrive).
+
+    The leader teleoperates in gravity-compensation (zero task stiffness = free to
+    backdrive). On stop, command its current pose as the target and load a stiff
+    cartesian-impedance config so it holds position instead of flopping.
+    """
+    if leader is None:
+        return
+    try:
+        leader.robot.set_target(pose=leader.robot.end_effector_pose)  # target = current (no jump)
+        stiff = find_config("control/default_cartesian_impedance.yaml")
+        if stiff is None:
+            logger.warning("default_cartesian_impedance config not found; leader left backdrivable.")
+            return
+        leader.robot.cartesian_controller_parameters_client.load_param_config(stiff)
+        logger.info("Leader holding current pose (freedrive disabled).")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Could not switch leader to hold: {e}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,6 +136,7 @@ def main() -> None:
     except KeyboardInterrupt:
         logger.info("Stopping.")
     finally:
+        _hold_leader(leader)  # disable freedrive: hold the leader where it stopped
         if telem is not None and log_path:
             telem.to_jsonl(log_path)
             logger.info(f"Wrote telemetry: {log_path}")

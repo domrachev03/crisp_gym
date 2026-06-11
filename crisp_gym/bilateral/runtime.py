@@ -104,6 +104,13 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         follower_adapter = CrispCartesianAdapter(follower_robot, follower_home, wrench_fn=follower_wrench_fn)
         follower_robot.set_target(pose=vec_to_pose(follower_home))  # hold at home
 
+    if config.tdpa and config.delay_steps == 0:
+        logger.warning(
+            "TDPA enabled with delay_steps=0. TDPA passivates a DELAYED channel; with no "
+            "delay the channel is already passive, so TDPA only over-damps and throttles the "
+            "reflected force intermittently (laggy/inconsistent feel). Use plain 'pf' here, or "
+            "add --delay-steps to actually exercise TDPA."
+        )
     logger.info(
         f"Bilateral controller: scheme={config.scheme} mode={config.mode} "
         f"force={config.force} force_fwd={config.force_fwd} pos_spring={config.pos_spring} "
