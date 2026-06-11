@@ -1,0 +1,19 @@
+# Position-force + TDPA. Passivates the reflected force so contact stays stable
+# under channel delay. TDPA master energy budget is driven by the LEADER wrench
+# (Fh), fixing the human_force=0 over-damping bug. contact_threshold_n=3.0 gates
+# the passivity observer to true contact (matches MasterOnlyPOPC default).
+scheme: pf_tdpa
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: false
+tdpa: true
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 1.0
+feedback_sign: 1.0
+feedback_max_force: 20.0
+contact_threshold_n: 3.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
