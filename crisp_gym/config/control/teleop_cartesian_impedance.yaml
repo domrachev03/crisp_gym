@@ -1,7 +1,9 @@
 # Follower cartesian impedance for bilateral teleop.
-# Rotational PD lowered (HW 2026-06-11: yaw was stiff/undamped -> hard to rotate +
-# diverged). k_rot dropped to 20 (below crisp default 30 and franka_server 45);
-# d_rot kept at the 10 cap. Translation gains unchanged (translation felt fine).
+# The yaw divergence turned out to be the position spring's rotational gain (fixed
+# via rot_spring_k), NOT the follower PD. With that fixed, k_rot is raised to 45
+# (= franka_server reference) so the follower tracks the leader's rotation tightly
+# (at k_rot 20 the follower under-rotated the leader by ~0.10 rad / ~6 deg). d_rot
+# stays at 10. Translation gains unchanged (translation felt fine).
 # Param names match crisp CartesianController (== franka_server default_cartesian_impedance).
 limit_error: true
 limit_torques: true
@@ -15,9 +17,9 @@ stop_commands: false
 task.k_pos_x: 600.0
 task.k_pos_y: 600.0
 task.k_pos_z: 600.0
-task.k_rot_x: 20.0
-task.k_rot_y: 20.0
-task.k_rot_z: 20.0
+task.k_rot_x: 45.0
+task.k_rot_y: 45.0
+task.k_rot_z: 45.0
 
 task.d_pos_x: 60.0
 task.d_pos_y: 60.0

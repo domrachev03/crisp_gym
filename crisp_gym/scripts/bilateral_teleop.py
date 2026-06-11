@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import time
+
+import rclpy
 
 from crisp_gym.bilateral.bilateral_config import make_bilateral_config
 from crisp_gym.bilateral.runtime import build_bilateral_controller
@@ -126,11 +129,22 @@ def main() -> None:
     log_path = None if args.no_log else (args.log or f"/tmp/bilateral_{config.scheme}.jsonl")
     telem = TeleopLogger() if log_path else None
 
+    # Install our own SIGINT handler: rclpy's default handler shuts the ROS context
+    # down the instant Ctrl-C lands, which invalidates the node before _hold_leader's
+    # service call can run ("rcl node's context is invalid"). Setting a flag instead
+    # lets the loop exit with the context still alive, so the leader hold succeeds.
+    stop = {"flag": False}
+
+    def _on_sigint(signum, frame):  # noqa: ANN001
+        stop["flag"] = True
+
+    signal.signal(signal.SIGINT, _on_sigint)
+
     logger.info(f":rocket: Bilateral teleop scheme={config.scheme} dt={dt:.4f}s "
                 f"log={log_path}. Ctrl-C to stop.")
     t0 = time.monotonic()
     try:
-        while True:
+        while not stop["flag"]:
             t_loop = time.monotonic()
             tel = controller.step(dt=dt, human_force=None)  # human pushes the leader physically
             if telem is not None:
@@ -145,13 +159,14 @@ def main() -> None:
                     delay_steps=tel.delay_steps, control_dt=tel.control_dt,
                 )
             time.sleep(max(0.0, dt - (time.monotonic() - t_loop)))
-    except KeyboardInterrupt:
-        logger.info("Stopping.")
     finally:
-        _hold_leader(leader)  # disable freedrive: hold the leader where it stopped
+        logger.info("Stopping.")
+        _hold_leader(leader)  # ROS context still valid here -> hold actually applies
         if telem is not None and log_path:
             telem.to_jsonl(log_path)
             logger.info(f"Wrote telemetry: {log_path}")
+        if rclpy.ok():
+            rclpy.try_shutdown()  # end the crisp_py spin thread cleanly after the hold
 
 
 if __name__ == "__main__":
