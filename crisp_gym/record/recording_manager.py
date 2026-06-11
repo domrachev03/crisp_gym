@@ -1,5 +1,7 @@
 """Keyboard event listener for controlling episode recording."""
 
+from __future__ import annotations
+
 import logging
 import multiprocessing as mp
 import subprocess
@@ -19,7 +21,6 @@ try:
 except ImportError:
     from lerobot.constants import HF_LEROBOT_HOME
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from pynput import keyboard
 from rclpy.executors import SingleThreadedExecutor
 from rich import print
 from rich.panel import Panel
@@ -504,6 +505,9 @@ class KeyboardRecordingManager(RecordingManager):
             **kwargs: Individual parameters for backwards compatibility.
         """
         super().__init__(config=config, **kwargs)
+        from pynput import keyboard  # lazy: needs X, only for the keyboard manager
+
+        self._keyboard = keyboard
         self.listener = keyboard.Listener(on_press=self._on_press)
 
     @override
@@ -520,7 +524,7 @@ class KeyboardRecordingManager(RecordingManager):
         if key is None:
             return
 
-        if isinstance(key, keyboard.Key):
+        if isinstance(key, self._keyboard.Key):
             return
 
         try:
