@@ -135,8 +135,11 @@ class RecordingManager(ABC):
         if self.config.resume:
             logger.info(f"Resuming recording from existing dataset: {self.config.repo_id}")
             # resume() opens the dataset WRITABLE; plain LeRobotDataset(...) is read-only.
+            # It needs an explicit local root (the dir create() wrote to) -- root=None
+            # would target the read-only Hub snapshot cache and is rejected.
             dataset = LeRobotDataset.resume(
                 repo_id=self.config.repo_id,
+                root=HF_LEROBOT_HOME / self.config.repo_id,
                 image_writer_threads=self.config.image_writer_threads,
                 image_writer_processes=self.config.image_writer_processes,
             )
