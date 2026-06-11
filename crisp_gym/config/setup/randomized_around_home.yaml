@@ -1,0 +1,26 @@
+# Episode setup: randomized follower start around a fixed center, retract between episodes.
+# Mirrors lerobot-panda peg_tight_insert's setup (minus the grasp sequence).
+#   episode 0   : home follower, capture center (start_center below, or the home pose if null),
+#                 move to a start pose sampled around it.
+#   episode 1..N: retract straight up retract_z_offset, then move to a fresh sampled start.
+# The bilateral coupling is re-anchored at each start so teleop engages jump-free.
+enabled: true
+home_before_first: true
+move_speed: 0.05           # m/s for the blocking setup moves (gentle)
+retract_z_offset: 0.10     # go up ~10 cm after each episode
+final_settle_s: 0.5
+wait_for_input: false      # the recording manager's start key already gates the episode
+
+seed: 0                    # reproducible jitter (seed + episode_index); null = nondeterministic
+
+# Fixed point to randomize around. null -> capture the follower's home EE pose once.
+start_center: null
+# start_center:
+#   position: [0.5, 0.0, 0.3]
+#   quaternion_xyzw: [1.0, 0.0, 0.0, 0.0]
+
+start_jitter:
+  x: 0.05                  # +- m
+  y: 0.05
+  z: 0.02
+  yaw_deg: 10.0            # +- deg about the tool z

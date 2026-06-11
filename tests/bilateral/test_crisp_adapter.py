@@ -141,6 +141,31 @@ def test_joint_feedforward_is_recorded_noop_by_default():
     assert adapter.robot.target_joint_arg is None  # position target untouched
 
 
+def test_cartesian_reanchor_no_jump():
+    # after the follower is moved (episode setup) and re-anchored, a zero leader
+    # delta must command the follower's NEW pose -> no jump at engage.
+    new_leader = _vec(0.4, 0.1, 0.6, (0.2, 0, 0))
+    new_follower = _vec(0.3, -0.2, 0.5, (0, 0, 0.5))
+    leader = _IdentityCartAdapter(_FakeCartRobot(_vec(0, 0, 0)), _vec(0, 0, 0))
+    follower = _IdentityCartAdapter(_FakeCartRobot(_vec(0, 0, 0)), _vec(0, 0, 0))
+    leader.robot._vec = new_leader
+    follower.robot._vec = new_follower
+    leader.reanchor()
+    follower.reanchor()
+    follower.set_target_position(leader.position)  # leader delta == 0 right after reanchor
+    assert np.allclose(follower.last_target_vec, new_follower, atol=1e-9)
+
+
+def test_joint_reanchor_recaptures_home():
+    home = np.zeros(7)
+    adapter = CrispJointAdapter(_FakeJointRobot(home), home)
+    adapter.robot.joint_values = np.arange(7.0)
+    adapter.reanchor()
+    assert np.allclose(adapter.home, np.arange(7.0))
+    adapter.set_target_position(np.zeros(7))  # zero delta -> stays at new home
+    assert np.allclose(adapter.robot.target_joint_arg, np.arange(7.0))
+
+
 def test_pose_to_vec_roundtrip():
     v = _vec(0.1, 0.2, 0.3, (0.2, -0.1, 0.4))
     assert np.allclose(pose_to_vec(_FakePose(v)), v, atol=1e-12)

@@ -17,6 +17,8 @@ from crisp_gym.envs.manipulator_env import make_env
 from crisp_gym.record.recording_manager import make_recording_manager
 from crisp_gym.bilateral.bilateral_config import make_bilateral_config
 from crisp_gym.bilateral.runtime import build_bilateral_controller
+from crisp_gym.config.path import find_config
+from crisp_gym.record.episode_setup import EpisodeSetupConfig, EpisodeSetupRunner
 from crisp_gym.record.structured_record import (
     DEFAULT_SIGNALS,
     CameraReader,
@@ -54,6 +56,9 @@ def main():  # noqa: C901
                    help="Override the scheme's artificial round-trip channel delay (control steps).")
     p.add_argument("--feedback-gain", type=float, default=None,
                    help="Override the scheme's reflected-force gain.")
+    p.add_argument("--setup-config", type=str, default=None,
+                   help="Episode-setup config under config/setup/ (randomized start + retract). "
+                        "Unset = no per-episode repositioning.")
     p.add_argument("--signals", type=str, nargs="+", default=DEFAULT_SIGNALS,
                    help=f"High-rate signals to record. Available: {DEFAULT_SIGNALS}.")
     p.add_argument("--hrate-overlap", type=float, default=2.0,
@@ -140,6 +145,19 @@ def main():  # noqa: C901
         if bilateral_config is not None:
             controller = build_bilateral_controller(env, leader, bilateral_config)
 
+        # Optional per-episode setup: randomized follower start + retract between episodes.
+        setup_runner = None
+        if args.setup_config:
+            setup_path = find_config(f"setup/{args.setup_config}.yaml")
+            if setup_path is None:
+                raise ValueError(f"Setup config not found: setup/{args.setup_config}.yaml")
+            setup_cfg = EpisodeSetupConfig.from_yaml(setup_path)
+            if setup_cfg.enabled:
+                setup_runner = EpisodeSetupRunner(env.robot, setup_cfg)
+                logger.info(f"Episode setup '{args.setup_config}': retract {setup_cfg.retract_z_offset}m, "
+                            f"jitter +-[{setup_cfg.start_jitter.x},{setup_cfg.start_jitter.y},"
+                            f"{setup_cfg.start_jitter.z}]m yaw+-{setup_cfg.start_jitter.yaw_deg}deg")
+
         def on_start():
             env.robot.reset_targets()
             env.reset()
@@ -150,11 +168,17 @@ def main():  # noqa: C901
             leader.robot.controller_switcher_client.switch_controller("cartesian_impedance_controller")
             if leader.gripper is not None:
                 leader.gripper.disable_torque()
+            if controller is not None:
+                # re-anchor the coupling at the current poses (follower at its setup
+                # start, leader where the operator is ready) -> jump-free engage
+                controller.reanchor()
 
         def on_end():
             env.robot.reset_targets()
-            env.robot.home(blocking=False,
-                           home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
+            if setup_runner is None:
+                # setup handles repositioning (retract + randomized start) next episode
+                env.robot.home(blocking=False,
+                               home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
             leader.robot.reset_targets()
             leader.robot.home(blocking=False)
             if env.gripper is not None:
@@ -164,6 +188,8 @@ def main():  # noqa: C901
         with rm:
             while not rm.done():
                 logger.info(f"→ Episode {rm.episode_count + 1} / {rm.num_episodes}")
+                if setup_runner is not None:
+                    setup_runner.setup_episode(rm.episode_count)
                 if controller is not None:
                     teleop_fn = make_structured_bilateral_fn(
                         env, leader, controller, hrate, cams, args.signals, args.include_target

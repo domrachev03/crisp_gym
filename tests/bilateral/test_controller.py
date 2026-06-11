@@ -181,6 +181,18 @@ def test_commanded_target_is_the_delayed_leader_position():
     assert commanded[0] == 0.0
 
 
+def test_reanchor_recaptures_homes_at_current_pose():
+    leader, follower = _pair(dof=1, wall=False)
+    cfg = BilateralConfig(scheme="pf", force=True, delay_steps=3)
+    ctrl = BilateralController(leader, follower, cfg, dt=1e-3)
+    leader._pos = np.array([0.3])
+    follower._pos = np.array([0.5])
+    ctrl.reanchor()
+    assert np.allclose(ctrl.leader_home, [0.3])
+    assert np.allclose(ctrl.follower_home, [0.5])
+    assert np.allclose(ctrl._follower_target, [0.5])
+
+
 def test_telemetry_fields_populated():
     leader, follower = _pair(wall=True)
     cfg = BilateralConfig(scheme="pf", force=True, delay_steps=0)

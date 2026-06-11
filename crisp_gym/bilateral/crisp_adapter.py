@@ -88,6 +88,11 @@ class CrispCartesianAdapter:
         w_tcp = np.asarray(self._wrench_fn(), dtype=float)
         return rotate_wrench(_rot_of_vec(self._now_vec), w_tcp)  # TCP -> world
 
+    def reanchor(self) -> None:
+        """Re-home to the robot's current EE pose (after an episode-setup move)."""
+        self.home = pose_to_vec(self.robot.end_effector_pose)
+        self.last_target_vec = self.home.copy()
+
     def set_target_position(self, delta: NDArray) -> None:
         self.last_target_vec = integrate_pose(self.home, np.asarray(delta, dtype=float))
         self.robot.set_target(pose=self._vec_to_pose(self.last_target_vec))
@@ -134,6 +139,11 @@ class CrispJointAdapter:
         if self._effort_fn is None:
             return np.zeros_like(self.home)
         return np.asarray(self._effort_fn(), dtype=float)
+
+    def reanchor(self) -> None:
+        """Re-home to the robot's current joint values (after an episode-setup move)."""
+        self.home = np.asarray(self.robot.joint_values, dtype=float).copy()
+        self.last_target = self.home.copy()
 
     def set_target_position(self, delta: NDArray) -> None:
         self.last_target = self.home + np.asarray(delta, dtype=float)

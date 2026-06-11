@@ -109,6 +109,28 @@ class BilateralController:
         self._follower_target = self.follower_home.copy()   # relative integrated target
         self._step = 0
 
+    def reanchor(self) -> None:
+        """Re-capture the leader/follower homes at their current pose and reset the
+        channels. Call after an episode-setup move so the coupling engages from the
+        new pose without a jump (the adapters re-home; absolute coupling is then a
+        zero delta = follower stays put until the leader moves)."""
+        for r in (self.leader, self.follower):
+            if hasattr(r, "reanchor"):
+                r.reanchor()
+        self.leader_home = np.asarray(self.leader.position, dtype=float).copy()
+        self.follower_home = np.asarray(self.follower.position, dtype=float).copy()
+        self._prev_leader = self.leader_home.copy()
+        self._follower_target = self.follower_home.copy()
+        d = self.config.delay_steps
+        fwd_fill = self.leader_home if self.config.coupling == "absolute" else None
+        self.ch_fwd_pos = DelayedChannel(d, self.dof, fill=fwd_fill)
+        if self.ch_back_force is not None:
+            self.ch_back_force = DelayedChannel(d, self.dof)
+        if self.ch_fwd_force is not None:
+            self.ch_fwd_force = DelayedChannel(d, self.dof)
+        if self.ch_back_pos is not None:
+            self.ch_back_pos = DelayedChannel(d, self.dof, fill=self.follower_home)
+
     def _clamp_force(self, f: NDArray) -> NDArray:
         """Clamp the translational (first <=3 axes) force magnitude to the max."""
         f = np.asarray(f, dtype=float).copy()
