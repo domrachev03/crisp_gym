@@ -48,17 +48,17 @@ class _Leader:
 
 
 def test_hrate_window_sizing():
-    # window covers `overlap` inter-frame gaps: ceil(rate * overlap / fps)
-    assert sr.hrate_window(2100, 30, 2.0) == 140
-    assert sr.hrate_window(1000, 30, 2.0) == 67
-    assert sr.hrate_window(250, 60, 2.0) == 9
-    assert sr.hrate_window(2100, 60, 2.0) == 70
-    assert sr.hrate_window(2100, 60, 0.0) == 1  # never zero
+    # fixed, fps-independent: ft gets ft_window; others scale by rate (round(ft_window*rate/FT_RATE))
+    assert sr.hrate_window(2100, 150) == 150        # ft anchor
+    assert sr.hrate_window(1000, 150) == 71         # joints
+    assert sr.hrate_window(250, 150) == 18          # pose/twist
+    assert sr.hrate_window(2100, 0) == 1            # never zero
+    assert sr.hrate_window(2100, 250) == 250        # honors a larger window
 
 
 def test_build_hrate_specs():
     specs = sr.build_hrate_specs({"follower": "right", "leader": "left"},
-                                 ["ft", "joints"], fps=60, overlap_frames=2.0)
+                                 ["ft", "joints"], ft_window=150)
     keys = {s[0] for s in specs}
     assert keys == {"follower_ft", "follower_joints", "leader_ft", "leader_joints"}
     bytopic = {s[0]: s[1] for s in specs}
@@ -73,12 +73,12 @@ def test_features_shapes_and_keys():
     )
     assert feats["observation.follower_state"]["shape"] == (20,)
     assert feats["observation.leader_state"]["shape"] == (20,)
-    # fps 60, overlap 2 -> ft 70x6, joints 34x7, pose 9x7, twist 9x6
-    assert feats["observation.follower_ft_hrate"]["shape"] == (70, 6)
-    assert feats["observation.follower_joints_hrate"]["shape"] == (34, 7)
-    assert feats["observation.leader_pose_hrate"]["shape"] == (9, 7)
-    assert feats["observation.leader_twist_hrate"]["shape"] == (9, 6)
-    assert feats["observation.follower_ft_hrate_time"]["shape"] == (70,)
+    # fixed ft_window 150 (fps-independent) -> ft 150x6, joints 71x7, pose 18x7, twist 18x6
+    assert feats["observation.follower_ft_hrate"]["shape"] == (150, 6)
+    assert feats["observation.follower_joints_hrate"]["shape"] == (71, 7)
+    assert feats["observation.leader_pose_hrate"]["shape"] == (18, 7)
+    assert feats["observation.leader_twist_hrate"]["shape"] == (18, 6)
+    assert feats["observation.follower_ft_hrate_time"]["shape"] == (150,)
     assert feats["observation.images.wrist"]["shape"] == (480, 640, 3)
     assert feats["observation.images.front"]["video_info"]["video.fps"] == 60.0
     assert feats["action"]["shape"] == (7,)

@@ -61,9 +61,9 @@ def main():  # noqa: C901
                         "Unset = no per-episode repositioning.")
     p.add_argument("--signals", type=str, nargs="+", default=DEFAULT_SIGNALS,
                    help=f"High-rate signals to record. Available: {DEFAULT_SIGNALS}.")
-    p.add_argument("--hrate-overlap", type=float, default=7.15,
-                   help="Inter-frame gaps each hrate window covers. Window = ceil(rate*overlap/fps); "
-                        "7.15 keeps the ft window ~250 samples at 60 fps (it scales 1/fps).")
+    p.add_argument("--hrate-window-ft", type=int, default=150,
+                   help="Fixed ft high-rate window in samples (fps-independent, lerobot-panda style); "
+                        "other signals scale by their native rate to cover the same time span.")
     p.add_argument("--topic-template", type=str, default="/{ns}/{topic}")
     p.add_argument("--camera-config", type=str, default="realsense_rig",
                    help="Camera config under cameras/, or 'none'.")
@@ -90,7 +90,7 @@ def main():  # noqa: C901
         logger.info("Follower env + leader ready.")
 
         arms = {"follower": args.follower_namespace, "leader": args.leader_namespace}
-        specs = build_hrate_specs(arms, args.signals, args.fps, args.hrate_overlap, args.topic_template)
+        specs = build_hrate_specs(arms, args.signals, args.hrate_window_ft, args.topic_template)
         for key, topic, sig, window in specs:
             logger.info(f"hrate {key:<16} {topic:<36} window={window}")
         hrate = HrateManager(specs)
@@ -127,7 +127,7 @@ def main():  # noqa: C901
             setup_cfg = EpisodeSetupConfig.from_yaml(setup_path)
 
         features, _ = build_structured_features(
-            env, cam_specs, args.fps, args.signals, args.hrate_overlap, args.include_target,
+            env, cam_specs, args.fps, args.signals, args.hrate_window_ft, args.include_target,
             bilateral_dof=bilateral_dof,
         )
         logger.info(f"Recording {len(features)} features at {args.fps} fps "

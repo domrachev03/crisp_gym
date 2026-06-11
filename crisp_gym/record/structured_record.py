@@ -17,15 +17,15 @@ background executor and snapshotted per recorded frame:
     pose    PoseStamped    /<ns>/current_pose              ~250 Hz    7 dof (xyz + quat)
     twist   TwistStamped   /<ns>/current_twist             ~250 Hz    6 dof
 
-Per-signal window sizes are auto-derived from the native rate and the record fps
-so each window covers ``overlap_frames`` inter-frame gaps (overlap survives jitter).
+Per-signal window sizes are FIXED and fps-independent (lerobot-panda style): the ft
+signal gets ``ft_window`` samples and every other signal scales by its native rate,
+so all cover the same time span no matter the record fps.
 Cameras use upstream LeRobot ``RealSenseCamera`` (pyrealsense2 direct).
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import threading
 import time
 from dataclasses import dataclass
@@ -87,9 +87,18 @@ HRATE_SIGNALS: dict[str, dict] = {
 DEFAULT_SIGNALS = ["ft", "joints", "pose", "twist"]
 
 
-def hrate_window(rate: float, fps: float, overlap_frames: float = 2.0) -> int:
-    """Window size so each frame's window covers ``overlap_frames`` inter-frame gaps."""
-    return max(1, int(math.ceil(rate * overlap_frames / float(fps))))
+# Reference rate (ft) that anchors the fixed hrate windows.
+FT_RATE: float = HRATE_SIGNALS["ft"]["rate"]
+
+
+def hrate_window(rate: float, ft_window: int) -> int:
+    """Fixed, fps-INDEPENDENT window size (lerobot-panda style).
+
+    The ft signal gets ``ft_window`` samples; every other signal's window is
+    proportional to its native rate, so all signals cover the same time span
+    (``ft_window / FT_RATE`` seconds) regardless of the record fps.
+    """
+    return max(1, int(round(ft_window * rate / FT_RATE)))
 
 
 # --------------------------------------------------------------------------- #
@@ -144,8 +153,7 @@ class HrateManager:
 def build_hrate_specs(
     arms: dict[str, str],
     signals: list[str],
-    fps: float,
-    overlap_frames: float = 2.0,
+    ft_window: int = 150,
     ft_topic_template: str = "/{ns}/{topic}",
 ) -> list[tuple[str, str, str, int]]:
     """Build (key, topic, sig, window) specs for the given arms x signals.
@@ -153,8 +161,7 @@ def build_hrate_specs(
     Args:
         arms: mapping of arm label ("follower"/"leader") -> namespace ("right"/"left").
         signals: which HRATE_SIGNALS keys to record.
-        fps: record frame rate (drives window sizing).
-        overlap_frames: how many inter-frame gaps each window covers.
+        ft_window: fixed ft window in samples (fps-independent); others scale by rate.
         ft_topic_template: topic format with {ns} and {topic}.
     """
     specs = []
@@ -162,7 +169,7 @@ def build_hrate_specs(
         for sig in signals:
             s = HRATE_SIGNALS[sig]
             topic = ft_topic_template.format(ns=ns, topic=s["topic"])
-            window = hrate_window(s["rate"], fps, overlap_frames)
+            window = hrate_window(s["rate"], ft_window)
             specs.append((f"{arm}_{sig}", topic, sig, window))
     return specs
 
@@ -256,7 +263,7 @@ def build_structured_features(
     cameras: list[CameraSpec],
     fps: float,
     signals: list[str] | None = None,
-    overlap_frames: float = 2.0,
+    ft_window: int = 150,
     include_target: bool = True,
     arms: tuple[str, str] = ("follower", "leader"),
     bilateral_dof: int | None = None,
@@ -284,7 +291,7 @@ def build_structured_features(
         }
         for sig in signals:
             s = HRATE_SIGNALS[sig]
-            w = hrate_window(s["rate"], fps, overlap_frames)
+            w = hrate_window(s["rate"], ft_window)
             feats[f"observation.{arm}_{sig}_hrate"] = {
                 "dtype": "float32", "shape": (w, s["dof"]), "names": s["names"],
             }
