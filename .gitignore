@@ -1,0 +1,13 @@
+__pycache__
+.vscode
+.ros_env.sh
+
+# pixi environments
+.pixi
+*.egg-info
+build/lib
+pixi.lock
+scripts/set_env.sh
+outputs/
+models/
+crisp.log

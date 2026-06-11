@@ -1,0 +1,12 @@
+# RealSense cameras on inference_pc (read directly via pyrealsense2 / LeRobot RealSenseCamera).
+cameras:
+  - name: wrist
+    serial: "130322271369"   # Intel RealSense D405
+    width: 640
+    height: 480
+    fps: 30
+  - name: front
+    serial: "838212074376"   # Intel RealSense D435i
+    width: 640
+    height: 480
+    fps: 30
