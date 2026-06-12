@@ -19,6 +19,7 @@ from crisp_gym.bilateral.bilateral_config import make_bilateral_config
 from crisp_gym.bilateral.runtime import build_bilateral_controller
 from crisp_gym.config.path import find_config
 from crisp_gym.record.episode_setup import EpisodeSetupConfig, EpisodeSetupRunner
+from crisp_gym.record.hrate_process import HrateProcessManager
 from crisp_gym.record.structured_record import (
     DEFAULT_SIGNALS,
     CameraReader,
@@ -65,6 +66,12 @@ def main():  # noqa: C901
                    help="Fixed ft high-rate window in samples (fps-independent, lerobot-panda style); "
                         "other signals scale by their native rate to cover the same time span.")
     p.add_argument("--topic-template", type=str, default="/{ns}/{topic}")
+    p.add_argument("--hrate-process", action=argparse.BooleanOptionalAction, default=True,
+                   help="Capture hrate in a separate process (own GIL) so F/T + joints keep "
+                        "their full ~kHz rate. --no-hrate-process uses the in-process manager.")
+    p.add_argument("--hrate-cores", type=int, nargs="+", default=None,
+                   help="CPU cores to pin the hrate process to (e.g. --hrate-cores 6 7), so its "
+                        "kHz callbacks never contend with the record/encode loop.")
     p.add_argument("--camera-config", type=str, default="realsense_rig",
                    help="Camera config under cameras/, or 'none'.")
     p.add_argument("--camera-read-timeout-ms", type=int, default=600,
@@ -95,7 +102,12 @@ def main():  # noqa: C901
         specs = build_hrate_specs(arms, args.signals, args.hrate_window_ft, args.topic_template)
         for key, topic, sig, window in specs:
             logger.info(f"hrate {key:<16} {topic:<36} window={window}")
-        hrate = HrateManager(specs)
+        if args.hrate_process:
+            logger.info(f"hrate capture: separate process (cores={args.hrate_cores})")
+            hrate = HrateProcessManager(specs, core_affinity=args.hrate_cores)
+        else:
+            logger.info("hrate capture: in-process (legacy, GIL-shared)")
+            hrate = HrateManager(specs)
 
         cam_specs = []
         if args.camera_config and args.camera_config.lower() != "none":
