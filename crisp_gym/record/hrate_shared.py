@@ -84,10 +84,14 @@ class SharedHrateRing:
     @property
     def count(self) -> int:
         """Total samples appended since creation (monotonic; for rate diagnostics)."""
+        if self._wc is None:
+            return 0
         return int(self._wc[0])
 
     def append(self, t: float, value) -> None:  # noqa: ANN001
         # Hot path (sensor native rate): single-slot write, publish count last.
+        if self._wc is None:  # closed mid-teardown (a late poller callback)
+            return
         c = int(self._wc[0])
         i = c % self.capacity
         self._times[i] = t
@@ -101,8 +105,8 @@ class SharedHrateRing:
         few times if the writer laps the window during the read (seqlock).
         """
         n = self.window
-        if n == 0:
-            return np.zeros((0, self.dof)), np.zeros((0,))
+        if n == 0 or self._wc is None:
+            return np.zeros((max(0, n), self.dof)), np.zeros((max(0, n),))
         values = np.zeros((n, self.dof))
         times = np.zeros(n)
         for _ in range(4):

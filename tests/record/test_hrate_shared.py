@@ -77,6 +77,16 @@ def test_count_tracks_total_appends():
         ring.close()
 
 
+def test_append_snapshot_after_close_are_noops():
+    # A poller callback can fire mid-teardown; closed ring must not crash.
+    ring = SharedHrateRing.create(window=2, dof=1)
+    ring.close()
+    ring.append(t=1.0, value=np.array([1.0]))  # no-op, no raise
+    values, times = ring.snapshot(t_ref=0.0)
+    assert values.shape == (2, 1)
+    assert np.allclose(values, 0.0)
+
+
 def test_meta_roundtrip_attach_sees_writes():
     # A second handle attached by meta observes the creator's writes (same block).
     ring = SharedHrateRing.create(window=2, dof=1)

@@ -30,11 +30,18 @@ class HrateRingBuffer:
         self.window = int(window)
         self.dof = int(dof)
         self._buf: deque[tuple[float, NDArray]] = deque(maxlen=max(1, self.window * oversize))
+        self._count = 0
+
+    @property
+    def count(self) -> int:
+        """Total samples appended since creation (monotonic; for rate diagnostics)."""
+        return self._count
 
     def append(self, t: float, value) -> None:  # noqa: ANN001
         # Hot path (runs at the sensor's native kHz rate): store the raw value
         # cheaply (no per-sample numpy alloc) and defer array building to snapshot.
         self._buf.append((t, value))
+        self._count += 1
 
     def snapshot(self, t_ref: float) -> tuple[NDArray, NDArray]:
         """Latest ``window`` samples as (values (N, dof), times (N,) - t_ref).

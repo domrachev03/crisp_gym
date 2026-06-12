@@ -33,6 +33,14 @@ def test_zero_pads_front_before_filled():
     assert np.allclose(times[:3], 0.0)
 
 
+def test_count_tracks_total_appends():
+    buf = HrateRingBuffer(window=2, dof=1)
+    assert buf.count == 0
+    for i in range(10):  # past capacity: count keeps growing
+        buf.append(t=float(i), value=np.array([float(i)]))
+    assert buf.count == 10
+
+
 def test_window_zero_returns_empty():
     buf = HrateRingBuffer(window=0, dof=6)
     buf.append(t=1.0, value=np.zeros(6))
