@@ -38,6 +38,7 @@ the streamer reads ``observation.images.<name>`` (HxWx3), ``observation.<arm>_ft
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -67,6 +68,7 @@ class RerunStreamer:
         max_fps: float = 30.0,
         jpeg_quality: int = 50,
         memory_limit: str = "10%",
+        max_dim: int = 320,
     ) -> None:
         """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
@@ -86,6 +88,8 @@ class RerunStreamer:
             max_fps: Cap on frames accepted per second (0 = unlimited); throttles the sink.
             jpeg_quality: JPEG quality for image frames (lower = less bandwidth/latency).
             memory_limit: rerun viewer store cap (low = drops old data, bounds latency).
+            max_dim: downscale preview frames so max(H,W) <= this (0 = full res). Smaller
+                = far less encode/transport/render work per frame -> lower latency.
         """
         self.enabled = bool(enabled)
         self.mode = mode
@@ -96,6 +100,11 @@ class RerunStreamer:
         self.app_id = app_id
         self.jpeg_quality = int(jpeg_quality)
         self.memory_limit = memory_limit
+        self._max_dim = int(max_dim)
+        # Flush the rerun micro-batcher per frame (no waiting to accumulate bytes), so a
+        # frame hits the sink immediately instead of sitting in the batch buffer.
+        if self.enabled:
+            os.environ.setdefault("RERUN_FLUSH_NUM_BYTES", "1024")
         self._min_dt = (1.0 / max_fps) if max_fps and max_fps > 0 else 0.0
         self._last_accept = 0.0
         self._rr = None
@@ -201,7 +210,7 @@ class RerunStreamer:
         for key, value in obs.items():
             if key.startswith("observation.images."):
                 name = key[len("observation.images.") :]
-                arr = np.asarray(value)
+                arr = self._downscale(np.asarray(value))
                 img = rr.Image(arr)
                 try:
                     img = img.compress(jpeg_quality=self.jpeg_quality)
@@ -226,6 +235,24 @@ class RerunStreamer:
                 latest = pose[-1] if pose.ndim == 2 and len(pose) else pose.reshape(-1)
                 if latest.shape[0] >= 3:
                     rr.log(f"{arm}/ee", rr.Points3D(latest[:3].reshape(1, 3)))
+
+    def _downscale(self, arr: np.ndarray) -> np.ndarray:
+        """Return a smaller copy for the preview (never mutates the recorded frame)."""
+        if not self._max_dim or arr.ndim < 2:
+            return arr
+        h, w = arr.shape[:2]
+        m = max(h, w)
+        if m <= self._max_dim:
+            return arr
+        scale = self._max_dim / m
+        try:
+            import cv2
+
+            return cv2.resize(arr, (max(1, int(w * scale)), max(1, int(h * scale))),
+                              interpolation=cv2.INTER_AREA)
+        except Exception:  # noqa: BLE001 -- no cv2: cheap stride subsample (a fresh copy)
+            step = int(np.ceil(m / self._max_dim))
+            return np.ascontiguousarray(arr[::step, ::step])
 
     def flush(self, timeout: float = 2.0) -> None:
         """Block until queued frames are logged (best-effort, bounded by ``timeout``)."""
