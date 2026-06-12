@@ -68,12 +68,13 @@ class _FakeRerun(types.ModuleType):
         self.served = None
         self.spawned = False
         self.saved = None
+        self.compressed = 0  # count of Image.compress() calls
         self.logged: list[tuple[str, str]] = []  # (entity_path, kind)
 
     def init(self, app_id, spawn=False):  # noqa: ANN001
         self.inited = app_id
 
-    def serve_web(self, *, open_browser, web_port, ws_port):  # noqa: ANN001
+    def serve_web(self, *, open_browser, web_port, ws_port, server_memory_limit=None):  # noqa: ANN001
         self.served = (web_port, ws_port)
 
     def spawn(self, *a, **k):  # noqa: ANN002, ANN003
@@ -83,11 +84,18 @@ class _FakeRerun(types.ModuleType):
         self.saved = path
 
     # logging primitives -- record entity path + which archetype was used
-    def log(self, entity_path, value):  # noqa: ANN001
+    def log(self, entity_path, value, *, static=False, **kw):  # noqa: ANN001, ANN003
         self.logged.append((entity_path, type(value).__name__))
 
     def Image(self, arr):  # noqa: ANN001, N802
-        return types.SimpleNamespace(_arr=arr, __class__=type("Image", (), {}))
+        fake = self
+
+        def _compress(jpeg_quality=95):  # noqa: ANN001
+            fake.compressed += 1
+            return types.SimpleNamespace(_jpeg=jpeg_quality, __class__=type("EncodedImage", (), {}))
+
+        return types.SimpleNamespace(_arr=arr, compress=_compress,
+                                     __class__=type("Image", (), {}))
 
     def Scalar(self, v):  # noqa: ANN001, N802
         return types.SimpleNamespace(_v=v, __class__=type("Scalar", (), {}))
@@ -181,6 +189,18 @@ def test_log_frame_logs_async_after_flush(monkeypatch):
     s.flush()  # worker logs on its own thread; flush waits for it
     assert any("camera" in p for p, _ in fake.logged)
     s.close()
+
+
+def test_images_logged_jpeg_compressed(monkeypatch):
+    fake = _FakeRerun()
+    monkeypatch.setitem(sys.modules, "rerun", fake)
+    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, max_fps=0)
+    s.log_frame(_fake_obs())
+    s.flush()
+    s.close()
+    # _fake_obs has 2 camera images -> both JPEG-compressed before logging
+    assert fake.compressed == 2
+    assert [p for p, _ in fake.logged if "camera" in p]  # and they were logged
 
 
 def test_max_fps_throttles_rapid_frames(monkeypatch):

@@ -18,9 +18,11 @@ worker thread and returns immediately, so image serialisation never blocks the 6
 record loop (logging inline caused the loop to lag). The queue is depth-1 **latest-wins**:
 while the worker logs a frame, only the newest frame produced meanwhile survives (older
 ones are dropped), so the viewer shows ~real-time instead of falling a queue-length
-behind. ``max_fps`` throttles how often frames are accepted (lighter sink, esp. the web
-ws) and ``web`` frames are JPEG-compressed to cut bandwidth. The recorded *dataset* is
-produced by the writer process and is unaffected by any drop.
+behind. Following the lerobot-panda recipe, images are logged ``static`` (always-latest,
+no timeline accumulation) and the viewer is given a small ``memory_limit`` so it drops
+old data; frames are JPEG-compressed and ``max_fps``-throttled so the raw stream never
+floods the sink faster than it drains. The recorded *dataset* is produced by the writer
+process and is unaffected by any drop.
 
 Design rules (so it never disturbs recording):
     * disabled  -> a total no-op; ``rerun`` is never imported, no worker thread.
@@ -63,7 +65,8 @@ class RerunStreamer:
         app_id: str = "crisp_record",
         buffer: int = 1,
         max_fps: float = 30.0,
-        jpeg_quality: int = 90,
+        jpeg_quality: int = 50,
+        memory_limit: str = "10%",
     ) -> None:
         """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
@@ -81,7 +84,8 @@ class RerunStreamer:
             buffer: Worker queue depth; default 1 = latest-wins (lowest latency). Larger
                 values buffer more frames before dropping (rarely wanted for a preview).
             max_fps: Cap on frames accepted per second (0 = unlimited); throttles the sink.
-            jpeg_quality: JPEG quality for ``web`` image frames (bandwidth vs. fidelity).
+            jpeg_quality: JPEG quality for image frames (lower = less bandwidth/latency).
+            memory_limit: rerun viewer store cap (low = drops old data, bounds latency).
         """
         self.enabled = bool(enabled)
         self.mode = mode
@@ -91,11 +95,11 @@ class RerunStreamer:
         self.save_path = save_path or "crisp_record.rrd"
         self.app_id = app_id
         self.jpeg_quality = int(jpeg_quality)
+        self.memory_limit = memory_limit
         self._min_dt = (1.0 / max_fps) if max_fps and max_fps > 0 else 0.0
         self._last_accept = 0.0
         self._rr = None
         self._warned = False
-        self._frame = 0
         self._queue: queue.Queue = queue.Queue(maxsize=max(1, int(buffer)))
         self._worker: threading.Thread | None = None
 
@@ -112,10 +116,11 @@ class RerunStreamer:
                 raise ImportError("rerun is unavailable")
             rr.init(app_id, spawn=False)
             if mode == "spawn":
-                rr.spawn()
+                rr.spawn(memory_limit=self.memory_limit)
                 logger.info("rerun native viewer spawned (needs DISPLAY on this PC).")
             elif mode == "web":
-                rr.serve_web(open_browser=False, web_port=web_port, ws_port=ws_port)
+                rr.serve_web(open_browser=False, web_port=web_port, ws_port=ws_port,
+                             server_memory_limit=self.memory_limit)
                 logger.info("rerun web viewer live: http://<host>:%d?url=ws://<host>:%d",
                             web_port, ws_port)
             else:  # save
@@ -184,21 +189,25 @@ class RerunStreamer:
                 self._queue.task_done()
 
     def _log(self, obs: dict) -> None:
-        """Map one obs to rerun entities (images always; F/T+pose unless images_only)."""
+        """Map one obs to rerun entities (images always; F/T+pose unless images_only).
+
+        Images are logged ``static`` (overwrite, no per-frame timeline point) so the
+        viewer always shows the latest frame with no accumulation -- the lerobot-panda
+        recipe -- and JPEG-compressed so raw frames don't flood the sink faster than the
+        viewer drains (which was the residual lag in spawn mode).
+        """
         rr = self._rr
-        rr.set_time_sequence("frame", self._frame)
-        self._frame += 1
 
         for key, value in obs.items():
             if key.startswith("observation.images."):
                 name = key[len("observation.images.") :]
-                img = rr.Image(np.asarray(value))
-                if self.mode == "web":  # JPEG-compress to cut websocket bandwidth
-                    try:
-                        img = img.compress(jpeg_quality=self.jpeg_quality)
-                    except Exception:  # noqa: BLE001 -- fall back to raw if compress unsupported
-                        img = rr.Image(np.asarray(value))
-                rr.log(f"cameras/{name}", img)
+                arr = np.asarray(value)
+                img = rr.Image(arr)
+                try:
+                    img = img.compress(jpeg_quality=self.jpeg_quality)
+                except Exception:  # noqa: BLE001 -- fall back to raw if compress unsupported
+                    img = rr.Image(arr)
+                rr.log(f"cameras/{name}", img, static=True)
 
         if self.images_only:
             return
