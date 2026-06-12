@@ -13,11 +13,14 @@ opens one of three sinks depending on ``mode``:
 Each recorded frame is logged: camera image(s) always, and -- unless ``images_only`` --
 the per-arm force magnitude and EE position too.
 
-**Off the control loop.** ``log_frame`` only hands the obs to a background worker thread
-via a small drop-oldest queue and returns immediately, so image serialisation never
-blocks the 60 fps record loop (logging inline caused the loop to lag). rerun is a live
-preview, so under backpressure the oldest queued frames are dropped (newest kept); the
-recorded *dataset* is produced by the writer process and is unaffected by any drop.
+**Off the control loop, low latency.** ``log_frame`` only hands the obs to a background
+worker thread and returns immediately, so image serialisation never blocks the 60 fps
+record loop (logging inline caused the loop to lag). The queue is depth-1 **latest-wins**:
+while the worker logs a frame, only the newest frame produced meanwhile survives (older
+ones are dropped), so the viewer shows ~real-time instead of falling a queue-length
+behind. ``max_fps`` throttles how often frames are accepted (lighter sink, esp. the web
+ws) and ``web`` frames are JPEG-compressed to cut bandwidth. The recorded *dataset* is
+produced by the writer process and is unaffected by any drop.
 
 Design rules (so it never disturbs recording):
     * disabled  -> a total no-op; ``rerun`` is never imported, no worker thread.
@@ -58,7 +61,9 @@ class RerunStreamer:
         images_only: bool = True,
         save_path: str | None = None,
         app_id: str = "crisp_record",
-        buffer: int = 8,
+        buffer: int = 1,
+        max_fps: float = 30.0,
+        jpeg_quality: int = 90,
     ) -> None:
         """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
@@ -73,8 +78,10 @@ class RerunStreamer:
                 pose streams are skipped (lean native image preview).
             save_path: Output .rrd path (``mode="save"``); defaults to ``crisp_record.rrd``.
             app_id: rerun application id (recording stream name).
-            buffer: Max frames queued for the worker; once full the oldest are dropped so
-                ``log_frame`` never blocks the record loop.
+            buffer: Worker queue depth; default 1 = latest-wins (lowest latency). Larger
+                values buffer more frames before dropping (rarely wanted for a preview).
+            max_fps: Cap on frames accepted per second (0 = unlimited); throttles the sink.
+            jpeg_quality: JPEG quality for ``web`` image frames (bandwidth vs. fidelity).
         """
         self.enabled = bool(enabled)
         self.mode = mode
@@ -83,6 +90,9 @@ class RerunStreamer:
         self.images_only = bool(images_only)
         self.save_path = save_path or "crisp_record.rrd"
         self.app_id = app_id
+        self.jpeg_quality = int(jpeg_quality)
+        self._min_dt = (1.0 / max_fps) if max_fps and max_fps > 0 else 0.0
+        self._last_accept = 0.0
         self._rr = None
         self._warned = False
         self._frame = 0
@@ -137,6 +147,11 @@ class RerunStreamer:
         """
         if self._rr is None or obs is None:
             return
+        if self._min_dt:  # throttle: drop frames arriving faster than max_fps
+            now = time.time()
+            if now - self._last_accept < self._min_dt:
+                return
+            self._last_accept = now
         try:
             self._queue.put_nowait(obs)
         except queue.Full:
@@ -177,7 +192,13 @@ class RerunStreamer:
         for key, value in obs.items():
             if key.startswith("observation.images."):
                 name = key[len("observation.images.") :]
-                rr.log(f"cameras/{name}", rr.Image(np.asarray(value)))
+                img = rr.Image(np.asarray(value))
+                if self.mode == "web":  # JPEG-compress to cut websocket bandwidth
+                    try:
+                        img = img.compress(jpeg_quality=self.jpeg_quality)
+                    except Exception:  # noqa: BLE001 -- fall back to raw if compress unsupported
+                        img = rr.Image(np.asarray(value))
+                rr.log(f"cameras/{name}", img)
 
         if self.images_only:
             return

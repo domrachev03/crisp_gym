@@ -183,6 +183,19 @@ def test_log_frame_logs_async_after_flush(monkeypatch):
     s.close()
 
 
+def test_max_fps_throttles_rapid_frames(monkeypatch):
+    fake = _FakeRerun()
+    monkeypatch.setitem(sys.modules, "rerun", fake)
+    # max_fps=5 -> 200ms gate; 5 back-to-back calls accept only the first.
+    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, buffer=1, max_fps=5)
+    for _ in range(5):
+        s.log_frame(_fake_obs())
+    s.flush()
+    s.close()
+    cam_logs = [p for p, _ in fake.logged if "camera" in p]
+    assert len(cam_logs) == 2  # one accepted frame x 2 images; the rest throttled
+
+
 def test_log_frame_nonblocking_and_bounded_under_backpressure(monkeypatch):
     # A wedged worker must not block the record loop, and the queue must stay bounded.
     gate = threading.Event()
@@ -197,7 +210,8 @@ def test_log_frame_nonblocking_and_bounded_under_backpressure(monkeypatch):
     fake.log = _blocking_log
     monkeypatch.setitem(sys.modules, "rerun", fake)
 
-    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, buffer=3)
+    # max_fps=0 disables the throttle so this exercises pure queue drop-oldest bounding.
+    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, buffer=3, max_fps=0)
     try:
         for _ in range(50):
             t0 = time.time()
