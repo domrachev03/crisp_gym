@@ -38,7 +38,6 @@ the streamer reads ``observation.images.<name>`` (HxWx3), ``observation.<arm>_ft
 from __future__ import annotations
 
 import logging
-import os
 import queue
 import threading
 import time
@@ -68,8 +67,6 @@ class RerunStreamer:
         max_fps: float = 30.0,
         jpeg_quality: int = 50,
         memory_limit: str = "10%",
-        max_dim: int = 320,
-        sync: bool = False,
     ) -> None:
         """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
@@ -89,14 +86,8 @@ class RerunStreamer:
             max_fps: Cap on frames accepted per second (0 = unlimited); throttles the sink.
             jpeg_quality: JPEG quality for image frames (lower = less bandwidth/latency).
             memory_limit: rerun viewer store cap (low = drops old data, bounds latency).
-            max_dim: downscale preview frames so max(H,W) <= this (0 = full res). Smaller
-                = far less encode/transport/render work per frame -> lower latency.
-            sync: log inline on the record loop instead of the worker thread (A/B knob).
-                Now that ``_log`` is cheap (downscaled + JPEG), inline logging adds little
-                to the loop but removes the worker's scheduling delay.
         """
         self.enabled = bool(enabled)
-        self.sync = bool(sync)
         self.mode = mode
         self.web_port = web_port
         self.ws_port = ws_port
@@ -105,11 +96,6 @@ class RerunStreamer:
         self.app_id = app_id
         self.jpeg_quality = int(jpeg_quality)
         self.memory_limit = memory_limit
-        self._max_dim = int(max_dim)
-        # Flush the rerun micro-batcher per frame (no waiting to accumulate bytes), so a
-        # frame hits the sink immediately instead of sitting in the batch buffer.
-        if self.enabled:
-            os.environ.setdefault("RERUN_FLUSH_NUM_BYTES", "1024")
         self._min_dt = (1.0 / max_fps) if max_fps and max_fps > 0 else 0.0
         self._last_accept = 0.0
         self._rr = None
@@ -149,11 +135,9 @@ class RerunStreamer:
             self._rr = None
             return
 
-        # Async (default): logging runs on a daemon worker so the record loop never waits
-        # on rr.log. sync=True logs inline instead (no worker) for A/B comparison.
-        if not self.sync:
-            self._worker = threading.Thread(target=self._run, name="rerun_log", daemon=True)
-            self._worker.start()
+        # Logging runs on a daemon worker so the record loop never waits on rr.log.
+        self._worker = threading.Thread(target=self._run, name="rerun_log", daemon=True)
+        self._worker.start()
 
     @property
     def active(self) -> bool:
@@ -167,15 +151,6 @@ class RerunStreamer:
         image serialise cannot stall the record loop. Never raises.
         """
         if self._rr is None or obs is None:
-            return
-        if self.sync:  # inline (no worker): log right here on the record loop
-            try:
-                self._log(obs)
-            except Exception as exc:  # noqa: BLE001 -- never crash recording on a log error
-                if not self._warned:
-                    logger.warning("rerun logging failed (%s: %s); muting further warnings.",
-                                   type(exc).__name__, exc)
-                    self._warned = True
             return
         if self._min_dt:  # throttle: drop frames arriving faster than max_fps
             now = time.time()
@@ -226,7 +201,7 @@ class RerunStreamer:
         for key, value in obs.items():
             if key.startswith("observation.images."):
                 name = key[len("observation.images.") :]
-                arr = self._downscale(np.asarray(value))
+                arr = np.asarray(value)
                 img = rr.Image(arr)
                 try:
                     img = img.compress(jpeg_quality=self.jpeg_quality)
@@ -251,24 +226,6 @@ class RerunStreamer:
                 latest = pose[-1] if pose.ndim == 2 and len(pose) else pose.reshape(-1)
                 if latest.shape[0] >= 3:
                     rr.log(f"{arm}/ee", rr.Points3D(latest[:3].reshape(1, 3)))
-
-    def _downscale(self, arr: np.ndarray) -> np.ndarray:
-        """Return a smaller copy for the preview (never mutates the recorded frame)."""
-        if not self._max_dim or arr.ndim < 2:
-            return arr
-        h, w = arr.shape[:2]
-        m = max(h, w)
-        if m <= self._max_dim:
-            return arr
-        scale = self._max_dim / m
-        try:
-            import cv2
-
-            return cv2.resize(arr, (max(1, int(w * scale)), max(1, int(h * scale))),
-                              interpolation=cv2.INTER_AREA)
-        except Exception:  # noqa: BLE001 -- no cv2: cheap stride subsample (a fresh copy)
-            step = int(np.ceil(m / self._max_dim))
-            return np.ascontiguousarray(arr[::step, ::step])
 
     def flush(self, timeout: float = 2.0) -> None:
         """Block until queued frames are logged (best-effort, bounded by ``timeout``)."""

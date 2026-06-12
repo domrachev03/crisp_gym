@@ -203,36 +203,6 @@ def test_images_logged_jpeg_compressed(monkeypatch):
     assert [p for p, _ in fake.logged if "camera" in p]  # and they were logged
 
 
-def test_sync_mode_logs_inline_without_worker(monkeypatch):
-    fake = _FakeRerun()
-    monkeypatch.setitem(sys.modules, "rerun", fake)
-    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, sync=True)
-    assert s._worker is None  # no worker thread in sync mode
-    s.log_frame(_fake_obs())  # logged immediately, no flush needed
-    assert any("camera" in p for p, _ in fake.logged)
-    s.close()
-
-
-def test_downscale_caps_dimension_and_passes_small_through():
-    s = RerunStreamer(enabled=False)  # disabled: exercise the pure helper (max_dim default 320)
-    small = s._downscale(np.zeros((480, 640, 3), dtype=np.uint8))
-    assert max(small.shape[:2]) <= 320
-    tiny = np.zeros((8, 8, 3), dtype=np.uint8)
-    assert s._downscale(tiny) is tiny  # already small -> no copy
-
-
-def test_preview_downscale_keeps_recorded_frame_full_res(monkeypatch):
-    fake = _FakeRerun()
-    monkeypatch.setitem(sys.modules, "rerun", fake)
-    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, max_fps=0, max_dim=320)
-    obs = {"observation.images.wrist": np.zeros((480, 640, 3), dtype=np.uint8)}
-    s.log_frame(obs)
-    s.flush()
-    s.close()
-    # the obs the writer process records is untouched -> dataset stays full resolution
-    assert obs["observation.images.wrist"].shape == (480, 640, 3)
-
-
 def test_max_fps_throttles_rapid_frames(monkeypatch):
     fake = _FakeRerun()
     monkeypatch.setitem(sys.modules, "rerun", fake)
