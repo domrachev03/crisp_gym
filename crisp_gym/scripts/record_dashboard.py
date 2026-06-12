@@ -22,12 +22,21 @@ def main() -> None:
     p.add_argument("--host", type=str, default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--arms", type=str, nargs="+", default=["right", "left"])
+    p.add_argument("--rerun-url", type=str, default=None,
+                   help="Explicit rerun web-viewer URL for the embedded iframe. "
+                        "Unset -> built from the page host as "
+                        "http://<host>:<web-port>?url=ws://<host>:<ws-port> (works over ssh tunnel).")
+    p.add_argument("--rerun-web-port", type=int, default=9090,
+                   help="Rerun web-viewer HTML port (used when --rerun-url is unset).")
+    p.add_argument("--rerun-ws-port", type=int, default=9877,
+                   help="Rerun websocket data port (used when --rerun-url is unset).")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO)
     monitor = DashboardMonitor(arms=tuple(args.arms))
     monitor.start()
-    app = create_app(monitor)
+    app = create_app(monitor, rerun_url=args.rerun_url,
+                     rerun_web_port=args.rerun_web_port, rerun_ws_port=args.rerun_ws_port)
     logging.getLogger(__name__).info(f"Dashboard on http://{args.host}:{args.port}")
     try:
         uvicorn.run(app, host=args.host, port=args.port, log_level="warning")

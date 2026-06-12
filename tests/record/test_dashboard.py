@@ -61,3 +61,37 @@ def test_invalid_control_rejected_without_publishing():
     r = c.post("/control/launch_rockets")
     assert r.status_code == 400
     assert m.sent == []
+
+
+def test_index_has_rerun_iframe_and_toggle():
+    """The page ships an (initially hidden) rerun iframe panel + a toggle button."""
+    c = TestClient(create_app(_FakeMonitor()))
+    html = c.get("/").text.lower()
+    assert "<iframe" in html
+    assert 'id="rerun"' in html  # the iframe element
+    assert "rerun" in html  # toggle/label text
+    assert "window.location.hostname" in html  # host derived for ssh-tunnel/LAN use
+
+
+def test_rerun_config_default_ports():
+    """Without an override the config exposes the default 9090/9877 rerun ports."""
+    c = TestClient(create_app(_FakeMonitor()))
+    cfg = c.get("/rerun_config").json()
+    assert cfg["web_port"] == 9090
+    assert cfg["ws_port"] == 9877
+    assert cfg["url"] is None  # let the page build it from window.location.hostname
+
+
+def test_rerun_config_explicit_url():
+    """An explicit --rerun-url is served verbatim for the iframe src."""
+    url = "http://my-host:9090?url=ws://my-host:9877"
+    c = TestClient(create_app(_FakeMonitor(), rerun_url=url))
+    cfg = c.get("/rerun_config").json()
+    assert cfg["url"] == url
+
+
+def test_rerun_config_custom_ports():
+    c = TestClient(create_app(_FakeMonitor(), rerun_web_port=8000, rerun_ws_port=8001))
+    cfg = c.get("/rerun_config").json()
+    assert cfg["web_port"] == 8000
+    assert cfg["ws_port"] == 8001

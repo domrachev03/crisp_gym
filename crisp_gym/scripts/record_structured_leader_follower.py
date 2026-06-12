@@ -20,6 +20,7 @@ from crisp_gym.bilateral.runtime import build_bilateral_controller
 from crisp_gym.config.path import find_config
 from crisp_gym.record.episode_setup import EpisodeSetupConfig, EpisodeSetupRunner
 from crisp_gym.record.hrate_process import HrateProcessManager
+from crisp_gym.record.rerun_stream import RerunStreamer
 from crisp_gym.record.structured_record import (
     DEFAULT_SIGNALS,
     CameraReader,
@@ -32,6 +33,22 @@ from crisp_gym.record.structured_record import (
 )
 from crisp_gym.teleop.teleop_robot import make_leader
 from crisp_gym.util.setup_logger import setup_logging
+
+
+def _with_rerun(data_fn: callable, rerun: RerunStreamer) -> callable:
+    """Wrap a frame producer so each non-skipped obs is also streamed to rerun.
+
+    The wrapper logs only after a real (obs, action) is produced, so the first-frame
+    ``(None, None)`` priming the teleop fn is ignored. rerun logging is non-fatal.
+    """
+
+    def _fn() -> tuple:
+        obs, action = data_fn()
+        if obs is not None:
+            rerun.log_frame(obs)
+        return obs, action
+
+    return _fn
 
 
 def main():  # noqa: C901
@@ -79,6 +96,17 @@ def main():  # noqa: C901
     p.add_argument("--image-writer-threads", type=int, default=8,
                    help="Async image-writer threads (0 = synchronous; processes deadlock with ROS).")
     p.add_argument("--no-target", dest="include_target", action="store_false", default=True)
+    p.add_argument("--rerun", action=argparse.BooleanOptionalAction, default=False,
+                   help="Stream each recorded frame to a rerun viewer (optional, non-fatal).")
+    p.add_argument("--rerun-mode", type=str, default="spawn", choices=["spawn", "web", "save"],
+                   help="rerun sink: 'spawn' native window (needs DISPLAY), 'web' headless "
+                        "viewer for the dashboard iframe, 'save' write an .rrd file.")
+    p.add_argument("--rerun-web-port", type=int, default=9090, help="rerun web-viewer HTML port (web mode).")
+    p.add_argument("--rerun-ws-port", type=int, default=9877, help="rerun websocket data port (web mode).")
+    p.add_argument("--rerun-save-path", type=str, default="crisp_record.rrd",
+                   help="Output .rrd path (save mode).")
+    p.add_argument("--rerun-images-only", action=argparse.BooleanOptionalAction, default=True,
+                   help="Log only camera images to rerun (skip F/T + pose); on by default.")
     p.add_argument("--home-config-noise", type=float, default=0.0)
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
@@ -91,6 +119,11 @@ def main():  # noqa: C901
         logger.info(f"{arg:<24}: {value}")
 
     env = leader = hrate = cams = None
+    rerun = RerunStreamer(
+        enabled=args.rerun, mode=args.rerun_mode,
+        web_port=args.rerun_web_port, ws_port=args.rerun_ws_port,
+        images_only=args.rerun_images_only, save_path=args.rerun_save_path,
+    )
     try:
         env = make_env(env_type=args.follower_config, control_type="cartesian",
                        namespace=args.follower_namespace)
@@ -223,6 +256,8 @@ def main():  # noqa: C901
                     teleop_fn = make_structured_teleop_fn(
                         env, leader, hrate, cams, args.signals, args.include_target
                     )
+                if rerun.active:
+                    teleop_fn = _with_rerun(teleop_fn, rerun)
                 task = tasks[np.random.randint(0, len(tasks))] if tasks else "No task specified."
                 logger.info(f"▷ Task: {task}")
                 rm.record_episode(data_fn=teleop_fn, task=task, on_start=on_start, on_end=on_end)
@@ -235,6 +270,7 @@ def main():  # noqa: C901
     except Exception as e:  # noqa: BLE001
         logger.exception(f"Error during recording: {e}.")
     finally:
+        rerun.close()
         if cams is not None:
             cams.close()
         if hrate is not None:
