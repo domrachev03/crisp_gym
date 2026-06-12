@@ -117,6 +117,9 @@ def main():  # noqa: C901
     p.add_argument("--rerun-max-dim", type=int, default=320,
                    help="Downscale the rerun PREVIEW so max(H,W)<=this (0=full res). The "
                         "recorded dataset keeps full resolution; only the live preview shrinks.")
+    p.add_argument("--rerun-sync", action=argparse.BooleanOptionalAction, default=False,
+                   help="Log to rerun inline on the record loop instead of a worker thread "
+                        "(A/B knob: removes the worker scheduling delay; costs loop time).")
     p.add_argument("--home-config-noise", type=float, default=0.0)
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
@@ -135,6 +138,7 @@ def main():  # noqa: C901
         images_only=args.rerun_images_only, save_path=args.rerun_save_path,
         max_fps=args.rerun_max_fps, jpeg_quality=args.rerun_jpeg_quality,
         memory_limit=args.rerun_memory_limit, max_dim=args.rerun_max_dim,
+        sync=args.rerun_sync,
     )
     try:
         env = make_env(env_type=args.follower_config, control_type="cartesian",

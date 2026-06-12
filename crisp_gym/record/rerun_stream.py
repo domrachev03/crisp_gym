@@ -69,6 +69,7 @@ class RerunStreamer:
         jpeg_quality: int = 50,
         memory_limit: str = "10%",
         max_dim: int = 320,
+        sync: bool = False,
     ) -> None:
         """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
@@ -90,8 +91,12 @@ class RerunStreamer:
             memory_limit: rerun viewer store cap (low = drops old data, bounds latency).
             max_dim: downscale preview frames so max(H,W) <= this (0 = full res). Smaller
                 = far less encode/transport/render work per frame -> lower latency.
+            sync: log inline on the record loop instead of the worker thread (A/B knob).
+                Now that ``_log`` is cheap (downscaled + JPEG), inline logging adds little
+                to the loop but removes the worker's scheduling delay.
         """
         self.enabled = bool(enabled)
+        self.sync = bool(sync)
         self.mode = mode
         self.web_port = web_port
         self.ws_port = ws_port
@@ -144,9 +149,11 @@ class RerunStreamer:
             self._rr = None
             return
 
-        # Logging runs on a daemon worker so the record loop never waits on rr.log.
-        self._worker = threading.Thread(target=self._run, name="rerun_log", daemon=True)
-        self._worker.start()
+        # Async (default): logging runs on a daemon worker so the record loop never waits
+        # on rr.log. sync=True logs inline instead (no worker) for A/B comparison.
+        if not self.sync:
+            self._worker = threading.Thread(target=self._run, name="rerun_log", daemon=True)
+            self._worker.start()
 
     @property
     def active(self) -> bool:
@@ -160,6 +167,15 @@ class RerunStreamer:
         image serialise cannot stall the record loop. Never raises.
         """
         if self._rr is None or obs is None:
+            return
+        if self.sync:  # inline (no worker): log right here on the record loop
+            try:
+                self._log(obs)
+            except Exception as exc:  # noqa: BLE001 -- never crash recording on a log error
+                if not self._warned:
+                    logger.warning("rerun logging failed (%s: %s); muting further warnings.",
+                                   type(exc).__name__, exc)
+                    self._warned = True
             return
         if self._min_dt:  # throttle: drop frames arriving faster than max_fps
             now = time.time()
