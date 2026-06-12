@@ -63,13 +63,14 @@ def test_invalid_control_rejected_without_publishing():
     assert m.sent == []
 
 
-def test_index_has_rerun_iframe_and_toggle():
-    """The page ships an (initially hidden) rerun iframe panel + a toggle button."""
+def test_index_has_inline_rerun_iframe():
+    """The page ships the rerun iframe embedded inline (always visible, no toggle)."""
     c = TestClient(create_app(_FakeMonitor()))
     html = c.get("/").text.lower()
     assert "<iframe" in html
     assert 'id="rerun"' in html  # the iframe element
-    assert "rerun" in html  # toggle/label text
+    assert "rerun viewer" in html  # inline panel label
+    assert "togglererun" not in html  # the show/hide toggle is gone
     assert "window.location.hostname" in html  # host derived for ssh-tunnel/LAN use
 
 

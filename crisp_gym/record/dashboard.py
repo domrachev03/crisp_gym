@@ -84,10 +84,9 @@ DASHBOARD_HTML = """<!doctype html>
  #go{background:#1f6f3f;border-color:#2a8a50}
  #exit{background:#6f1f1f;border-color:#8a2a2a}
  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
- .rerun-wrap{padding:0 20px 20px;max-width:1000px}
+ .rerun-wrap{padding:0 20px 24px;max-width:1000px}
  .rerun-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
- #rerunPanel{display:none}
- #rerun{width:100%;height:560px;border:1px solid #2a2f3a;border-radius:10px;background:#0b0d11}
+ #rerun{width:100%;height:600px;border:1px solid #2a2f3a;border-radius:10px;background:#0b0d11}
  a.rerun-link{color:#7fb2ec;text-decoration:none;font-size:13px}
  a.rerun-link:hover{text-decoration:underline}
 </style></head>
@@ -131,33 +130,26 @@ DASHBOARD_HTML = """<!doctype html>
 </div>
 <div class="rerun-wrap">
  <div class="rerun-head">
-   <button id="rerunToggle" onclick="toggleRerun()">Show rerun viewer</button>
-   <a id="rerunLink" class="rerun-link" href="#" target="_blank" rel="noopener">Open rerun viewer ↗</a>
+   <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8a93a6;margin:0">rerun viewer</h2>
+   <a id="rerunLink" class="rerun-link" href="#" target="_blank" rel="noopener">open in new tab ↗</a>
    <span class="sub" id="rerunMsg" style="margin-left:auto"></span>
  </div>
- <div id="rerunPanel">
-   <iframe id="rerun" src="about:blank" allow="fullscreen"></iframe>
- </div>
+ <iframe id="rerun" src="about:blank" allow="fullscreen"></iframe>
 </div>
 <script>
 const STATE_COLORS={recording:'#1f6f3f',is_waiting:'#7a5b1f',paused:'#1f4f7a',to_be_saved:'#1f6f3f',to_be_deleted:'#6f1f1f',exit:'#444'};
 // Rerun web viewer URL: explicit --rerun-url wins, else build from this page's host
 // (window.location.hostname) so it works over an ssh tunnel AND on the LAN.
-let RERUN_URL=null, rerunLoaded=false;
+// Rerun viewer is embedded inline (always visible): set the iframe src on load.
+let RERUN_URL=null;
 async function loadRerunConfig(){
   try{
     const c=await (await fetch('/rerun_config')).json();
     const host=window.location.hostname||'127.0.0.1';
     RERUN_URL=c.url||('http://'+host+':'+c.web_port+'?url=ws://'+host+':'+c.ws_port);
     document.getElementById('rerunLink').href=RERUN_URL;
+    document.getElementById('rerun').src=RERUN_URL;
   }catch(e){document.getElementById('rerunMsg').textContent='rerun config error';}
-}
-function toggleRerun(){
-  const panel=document.getElementById('rerunPanel'),btn=document.getElementById('rerunToggle');
-  const showing=panel.style.display==='block';
-  if(showing){panel.style.display='none';btn.textContent='Show rerun viewer';return;}
-  panel.style.display='block';btn.textContent='Hide rerun viewer';
-  if(!rerunLoaded && RERUN_URL){document.getElementById('rerun').src=RERUN_URL;rerunLoaded=true;}
 }
 loadRerunConfig();
 function fmt(v,d=2){return (v===undefined||v===null)?'–':Number(v).toFixed(d);}
