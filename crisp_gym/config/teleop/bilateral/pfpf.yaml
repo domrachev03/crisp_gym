@@ -19,7 +19,7 @@ control_frequency: 100.0
 delay_steps: 0
 feedback_gain: 1.0
 feedback_sign: 1.0
-feedback_max_force: 20.0
+feedback_max_force: 30.0
 force_fwd_gain: 0.3
 contact_threshold_n: 1.0
 reflect_deadband_n: 2.0

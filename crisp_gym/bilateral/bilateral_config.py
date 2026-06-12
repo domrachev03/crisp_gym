@@ -42,7 +42,7 @@ class BilateralConfig:
     # reflected-force shaping
     feedback_gain: float = 1.0
     feedback_sign: float = 1.0
-    feedback_max_force: float = 20.0
+    feedback_max_force: float = 30.0  # ~p99.9 of observed peg-insertion contact (pf-insert-10ep)
     contact_threshold_n: float = 1.0
     reflect_highpass_hz: float = 0.0
     reflect_deadband_n: float = 0.0
