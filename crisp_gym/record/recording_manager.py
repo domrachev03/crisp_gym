@@ -454,6 +454,12 @@ class ROSRecordingManager(RecordingManager):
         self._status_timer = self.node.create_timer(0.1, self._publish_status)
         logger.debug("ROS2 node created and subscriber initialized.")
 
+        # Spin the node so /record_transition triggers arrive and the /record_status
+        # timer fires. MUST start here in __init__ (not in a callback).
+        self._spin_stop = threading.Event()
+        self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+        self._spin_thread.start()
+
     def _publish_status(self) -> None:
         import json
 
@@ -468,10 +474,6 @@ class ROSRecordingManager(RecordingManager):
             "last_event": self.last_event,
         })
         self._status_pub.publish(msg)
-
-        self._spin_stop = threading.Event()
-        self._spin_thread = threading.Thread(target=self._spin_node, daemon=True)
-        self._spin_thread.start()
 
     def _spin_node(self):
         """Spin the ROS2 node in a separate thread until asked to stop."""
