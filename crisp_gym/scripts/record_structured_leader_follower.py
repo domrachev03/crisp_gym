@@ -107,6 +107,13 @@ def main():  # noqa: C901
                    help="Output .rrd path (save mode).")
     p.add_argument("--rerun-images-only", action=argparse.BooleanOptionalAction, default=True,
                    help="Log only camera images to rerun (skip F/T + pose); on by default.")
+    p.add_argument("--rerun-max-fps", type=float, default=30.0,
+                   help="Cap rerun frames/s (0=unlimited). Lower if the viewer lags; rr.log "
+                        "is fire-and-forget so a too-fast feed accumulates downstream.")
+    p.add_argument("--rerun-jpeg-quality", type=int, default=50,
+                   help="JPEG quality for rerun image frames (lower = less bandwidth/latency).")
+    p.add_argument("--rerun-memory-limit", type=str, default="10%",
+                   help="rerun viewer store cap (drops old data to bound latency).")
     p.add_argument("--home-config-noise", type=float, default=0.0)
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
@@ -123,6 +130,8 @@ def main():  # noqa: C901
         enabled=args.rerun, mode=args.rerun_mode,
         web_port=args.rerun_web_port, ws_port=args.rerun_ws_port,
         images_only=args.rerun_images_only, save_path=args.rerun_save_path,
+        max_fps=args.rerun_max_fps, jpeg_quality=args.rerun_jpeg_quality,
+        memory_limit=args.rerun_memory_limit,
     )
     try:
         env = make_env(env_type=args.follower_config, control_type="cartesian",
