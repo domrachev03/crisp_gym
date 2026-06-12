@@ -20,6 +20,26 @@ from rclpy.qos import qos_profile_sensor_data
 from std_msgs.msg import String
 
 
+def _resolve_gripper_config(name: str):  # noqa: ANN201
+    """Load a crisp_gym gripper yaml (by name or path) into a GripperConfig, or None.
+
+    Mirrors how the env resolves it: crisp_gym ``find_config`` locates the yaml under the
+    CRISP config paths, then ``GripperConfig.from_yaml``. Returns None if not found there
+    so the caller can fall back to crisp_py's built-in config names.
+    """
+    try:
+        from crisp_gym.config.path import find_config
+        from crisp_py.gripper.gripper_config import GripperConfig
+
+        rel = name if name.endswith((".yaml", ".yml")) else f"grippers/{name}.yaml"
+        path = find_config(rel)
+        if path is None:
+            return None
+        return GripperConfig.from_yaml(path=path.resolve())
+    except Exception:  # noqa: BLE001 -- fall back to crisp_py name lookup
+        return None
+
+
 class DashboardMonitor:
     def __init__(self, arms: tuple[str, ...] = ("right", "left"),
                  status_topic: str = "/record_status",
@@ -60,9 +80,19 @@ class DashboardMonitor:
             try:
                 from crisp_py.gripper.gripper import make_gripper
 
-                self._gripper = make_gripper(
-                    gripper_config, namespace=gripper_namespace, spin_node=False)
+                # Resolve crisp_gym gripper yamls (e.g. gripper_right_v2) via crisp_gym's
+                # own config paths first -- crisp_py's make_gripper only searches its own
+                # config dir. Fall back to crisp_py's built-in configs by name.
+                cfg = _resolve_gripper_config(gripper_config)
+                if cfg is not None:
+                    self._gripper = make_gripper(
+                        None, gripper_config=cfg, namespace=gripper_namespace, spin_node=False)
+                else:
+                    self._gripper = make_gripper(
+                        gripper_config, namespace=gripper_namespace, spin_node=False)
                 self._exec.add_node(self._gripper.node)
+                self.node.get_logger().info(
+                    f"gripper '{gripper_config}' (ns={gripper_namespace}) ready.")
             except Exception as e:  # noqa: BLE001
                 self._gripper = None
                 self.node.get_logger().warning(
