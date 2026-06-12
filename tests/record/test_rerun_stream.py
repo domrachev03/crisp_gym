@@ -8,6 +8,8 @@ injected to assert what would be logged. Mirrors the recorder's per-frame obs sh
 from __future__ import annotations
 
 import sys
+import threading
+import time
 import types
 
 import numpy as np
@@ -110,6 +112,7 @@ def test_web_serve_and_log_with_fake_rerun(monkeypatch):
     assert fake.inited == "crisp_record"
 
     s.log_frame(_fake_obs())
+    s.flush()
     paths = [p for p, _ in fake.logged]
     # both camera images logged under their names
     assert any("wrist" in p and "camera" in p for p in paths)
@@ -144,6 +147,7 @@ def test_images_only_skips_force_and_pose(monkeypatch):
     monkeypatch.setitem(sys.modules, "rerun", fake)
     s = RerunStreamer(enabled=True, mode="spawn", images_only=True)
     s.log_frame(_fake_obs())
+    s.flush()
     paths = [p for p, _ in fake.logged]
     # images logged, but NO force/ee streams
     assert any("camera" in p for p in paths)
@@ -165,4 +169,41 @@ def test_log_frame_never_raises_on_bad_obs(monkeypatch):
     # an exception inside logging must be swallowed (warn once), never crash recording
     s.log_frame(_fake_obs())
     s.log_frame(_fake_obs())
+    s.flush()
     s.close()
+
+
+def test_log_frame_logs_async_after_flush(monkeypatch):
+    fake = _FakeRerun()
+    monkeypatch.setitem(sys.modules, "rerun", fake)
+    s = RerunStreamer(enabled=True, mode="spawn", images_only=True)
+    s.log_frame(_fake_obs())
+    s.flush()  # worker logs on its own thread; flush waits for it
+    assert any("camera" in p for p, _ in fake.logged)
+    s.close()
+
+
+def test_log_frame_nonblocking_and_bounded_under_backpressure(monkeypatch):
+    # A wedged worker must not block the record loop, and the queue must stay bounded.
+    gate = threading.Event()
+
+    fake = _FakeRerun()
+    real_log = fake.log
+
+    def _blocking_log(path, value):  # noqa: ANN001
+        gate.wait(2.0)  # first call wedges the worker until released
+        real_log(path, value)
+
+    fake.log = _blocking_log
+    monkeypatch.setitem(sys.modules, "rerun", fake)
+
+    s = RerunStreamer(enabled=True, mode="spawn", images_only=True, buffer=3)
+    try:
+        for _ in range(50):
+            t0 = time.time()
+            s.log_frame(_fake_obs())
+            assert time.time() - t0 < 0.1  # never blocks, even with the worker wedged
+        assert s._queue.qsize() <= 3  # drop-oldest keeps the queue bounded
+    finally:
+        gate.set()
+        s.close()

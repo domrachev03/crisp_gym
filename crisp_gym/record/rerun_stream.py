@@ -1,4 +1,4 @@
-"""Optional live rerun streaming for the recorder (lazy, non-fatal).
+"""Optional live rerun streaming for the recorder (lazy, async, non-fatal).
 
 When the recorder is launched with ``--rerun``, a :class:`RerunStreamer` is created
 with ``enabled=True``. It lazy-imports ``rerun`` (an optional lerobot-feature dep) and
@@ -13,8 +13,14 @@ opens one of three sinks depending on ``mode``:
 Each recorded frame is logged: camera image(s) always, and -- unless ``images_only`` --
 the per-arm force magnitude and EE position too.
 
+**Off the control loop.** ``log_frame`` only hands the obs to a background worker thread
+via a small drop-oldest queue and returns immediately, so image serialisation never
+blocks the 60 fps record loop (logging inline caused the loop to lag). rerun is a live
+preview, so under backpressure the oldest queued frames are dropped (newest kept); the
+recorded *dataset* is produced by the writer process and is unaffected by any drop.
+
 Design rules (so it never disturbs recording):
-    * disabled  -> a total no-op; ``rerun`` is never imported.
+    * disabled  -> a total no-op; ``rerun`` is never imported, no worker thread.
     * import/serve failure -> ``active`` stays ``False``, logging is a no-op (warn once).
     * a logging exception is swallowed (warn once); a rerun hiccup must never crash the
       record loop.
@@ -27,6 +33,9 @@ the streamer reads ``observation.images.<name>`` (HxWx3), ``observation.<arm>_ft
 from __future__ import annotations
 
 import logging
+import queue
+import threading
+import time
 
 import numpy as np
 
@@ -34,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 _ARMS = ("follower", "leader")
 RERUN_MODES = ("spawn", "web", "save")
+_SENTINEL = object()  # queue poison pill to stop the worker
 
 
 class RerunStreamer:
@@ -48,8 +58,9 @@ class RerunStreamer:
         images_only: bool = True,
         save_path: str | None = None,
         app_id: str = "crisp_record",
+        buffer: int = 8,
     ) -> None:
-        """Open the requested rerun sink (lazy, non-fatal).
+        """Open the requested rerun sink (lazy, non-fatal) and start the logging worker.
 
         Args:
             enabled: Master switch. When ``False`` nothing is imported and every method
@@ -62,6 +73,8 @@ class RerunStreamer:
                 pose streams are skipped (lean native image preview).
             save_path: Output .rrd path (``mode="save"``); defaults to ``crisp_record.rrd``.
             app_id: rerun application id (recording stream name).
+            buffer: Max frames queued for the worker; once full the oldest are dropped so
+                ``log_frame`` never blocks the record loop.
         """
         self.enabled = bool(enabled)
         self.mode = mode
@@ -73,6 +86,8 @@ class RerunStreamer:
         self._rr = None
         self._warned = False
         self._frame = 0
+        self._queue: queue.Queue = queue.Queue(maxsize=max(1, int(buffer)))
+        self._worker: threading.Thread | None = None
 
         if not self.enabled:
             return
@@ -103,6 +118,11 @@ class RerunStreamer:
                 mode, type(exc).__name__, exc,
             )
             self._rr = None
+            return
+
+        # Logging runs on a daemon worker so the record loop never waits on rr.log.
+        self._worker = threading.Thread(target=self._run, name="rerun_log", daemon=True)
+        self._worker.start()
 
     @property
     def active(self) -> bool:
@@ -110,46 +130,99 @@ class RerunStreamer:
         return self._rr is not None
 
     def log_frame(self, obs: dict | None) -> None:
-        """Log one recorded frame to rerun (images always; F/T+pose unless images_only).
+        """Hand one recorded frame to the worker (non-blocking; drops oldest if backed up).
 
-        Never raises: a logging error is swallowed (warned once) so a rerun hiccup
-        cannot crash the record loop.
+        Returns immediately -- the actual rr.log happens on the worker thread, so a slow
+        image serialise cannot stall the record loop. Never raises.
         """
         if self._rr is None or obs is None:
             return
-        rr = self._rr
         try:
-            rr.set_time_sequence("frame", self._frame)
-            self._frame += 1
+            self._queue.put_nowait(obs)
+        except queue.Full:
+            # Drop the oldest queued frame to make room for the newest (live preview).
+            try:
+                self._queue.get_nowait()
+                self._queue.task_done()
+            except queue.Empty:
+                pass
+            try:
+                self._queue.put_nowait(obs)
+            except queue.Full:
+                pass
 
-            for key, value in obs.items():
-                if key.startswith("observation.images."):
-                    name = key[len("observation.images.") :]
-                    rr.log(f"cameras/{name}", rr.Image(np.asarray(value)))
+    def _run(self) -> None:
+        """Worker loop: drain the queue and log each frame to rerun."""
+        while True:
+            obs = self._queue.get()
+            if obs is _SENTINEL:
+                self._queue.task_done()
+                break
+            try:
+                self._log(obs)
+            except Exception as exc:  # noqa: BLE001 -- never crash recording on a log error
+                if not self._warned:
+                    logger.warning("rerun logging failed (%s: %s); muting further warnings.",
+                                   type(exc).__name__, exc)
+                    self._warned = True
+            finally:
+                self._queue.task_done()
 
-            if self.images_only:
+    def _log(self, obs: dict) -> None:
+        """Map one obs to rerun entities (images always; F/T+pose unless images_only)."""
+        rr = self._rr
+        rr.set_time_sequence("frame", self._frame)
+        self._frame += 1
+
+        for key, value in obs.items():
+            if key.startswith("observation.images."):
+                name = key[len("observation.images.") :]
+                rr.log(f"cameras/{name}", rr.Image(np.asarray(value)))
+
+        if self.images_only:
+            return
+
+        for arm in _ARMS:
+            ft = obs.get(f"observation.{arm}_ft_hrate")
+            if ft is not None:
+                ft = np.asarray(ft, dtype=np.float32)
+                latest = ft[-1] if ft.ndim == 2 and len(ft) else ft.reshape(-1)
+                if latest.shape[0] >= 3:
+                    mag = float(np.linalg.norm(latest[:3]))
+                    rr.log(f"{arm}/force_mag", rr.Scalar(mag))
+            pose = obs.get(f"observation.{arm}_pose_hrate")
+            if pose is not None:
+                pose = np.asarray(pose, dtype=np.float32)
+                latest = pose[-1] if pose.ndim == 2 and len(pose) else pose.reshape(-1)
+                if latest.shape[0] >= 3:
+                    rr.log(f"{arm}/ee", rr.Points3D(latest[:3].reshape(1, 3)))
+
+    def flush(self, timeout: float = 2.0) -> None:
+        """Block until queued frames are logged (best-effort, bounded by ``timeout``)."""
+        if self._worker is None:
+            return
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._queue.unfinished_tasks == 0:
                 return
-
-            for arm in _ARMS:
-                ft = obs.get(f"observation.{arm}_ft_hrate")
-                if ft is not None:
-                    ft = np.asarray(ft, dtype=np.float32)
-                    latest = ft[-1] if ft.ndim == 2 and len(ft) else ft.reshape(-1)
-                    if latest.shape[0] >= 3:
-                        mag = float(np.linalg.norm(latest[:3]))
-                        rr.log(f"{arm}/force_mag", rr.Scalar(mag))
-                pose = obs.get(f"observation.{arm}_pose_hrate")
-                if pose is not None:
-                    pose = np.asarray(pose, dtype=np.float32)
-                    latest = pose[-1] if pose.ndim == 2 and len(pose) else pose.reshape(-1)
-                    if latest.shape[0] >= 3:
-                        rr.log(f"{arm}/ee", rr.Points3D(latest[:3].reshape(1, 3)))
-        except Exception as exc:  # noqa: BLE001 -- never crash recording on a log error
-            if not self._warned:
-                logger.warning("rerun logging failed (%s: %s); muting further warnings.",
-                               type(exc).__name__, exc)
-                self._warned = True
+            time.sleep(0.005)
 
     def close(self) -> None:
-        """Release the rerun handle (the serve/spawn thread is a daemon; nothing to join)."""
+        """Flush, stop the worker, and release the rerun handle."""
+        if self._worker is not None:
+            self.flush()
+            try:
+                self._queue.put_nowait(_SENTINEL)
+            except queue.Full:  # make room, then poison
+                try:
+                    self._queue.get_nowait()
+                    self._queue.task_done()
+                except queue.Empty:
+                    pass
+                try:
+                    self._queue.put_nowait(_SENTINEL)
+                except queue.Full:
+                    pass
+            self._worker.join(timeout=2.0)
+            self._worker = None
         self._rr = None
