@@ -5,15 +5,17 @@ No ROS: the app talks to a monitor object; the real rclpy monitor is exercised o
 
 import pytest
 
-from crisp_gym.record.dashboard import VALID_COMMANDS, create_app
+from crisp_gym.record.dashboard import GRIPPER_WIDTHS, VALID_COMMANDS, create_app
 
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 
 class _FakeMonitor:
-    def __init__(self):
+    def __init__(self, gripper_ok=True):
         self.sent = []
+        self.gripper = []
+        self._gripper_ok = gripper_ok
 
     def snapshot(self):
         return {
@@ -26,6 +28,10 @@ class _FakeMonitor:
     def send_control(self, cmd):
         self.sent.append(cmd)
         return True
+
+    def set_gripper(self, width):
+        self.gripper.append(width)
+        return self._gripper_ok
 
 
 def test_valid_commands():
@@ -61,6 +67,52 @@ def test_invalid_control_rejected_without_publishing():
     r = c.post("/control/launch_rockets")
     assert r.status_code == 400
     assert m.sent == []
+
+
+def test_gripper_open_close_map_to_widths():
+    assert GRIPPER_WIDTHS == {"open": 1.0, "close": 0.0}
+
+
+def test_gripper_open_commands_width_1():
+    m = _FakeMonitor()
+    c = TestClient(create_app(m))
+    r = c.post("/gripper/open")
+    assert r.status_code == 200 and r.json()["ok"] is True
+    assert m.gripper == [1.0]
+
+
+def test_gripper_close_commands_width_0():
+    m = _FakeMonitor()
+    c = TestClient(create_app(m))
+    r = c.post("/gripper/close")
+    assert r.status_code == 200
+    assert m.gripper == [0.0]
+
+
+def test_gripper_invalid_action_rejected():
+    m = _FakeMonitor()
+    c = TestClient(create_app(m))
+    r = c.post("/gripper/halfway")
+    assert r.status_code == 400
+    assert m.gripper == []
+
+
+def test_gripper_unavailable_reports_not_ok():
+    m = _FakeMonitor(gripper_ok=False)
+    c = TestClient(create_app(m))
+    r = c.post("/gripper/open")
+    assert r.status_code == 200 and r.json()["ok"] is False
+
+
+def test_layout_has_gripper_buttons_and_rerun_left():
+    c = TestClient(create_app(_FakeMonitor()))
+    html = c.get("/").text
+    low = html.lower()
+    assert "grip('open')" in low and "grip('close')" in low  # gripper buttons
+    assert ">gripper<" in low  # gripper card label
+    # rerun on the left, the stacked cards on the right
+    assert 'class="left"' in low and 'class="right"' in low
+    assert low.index('class="left"') < low.index('id="rerun"')
 
 
 def test_index_has_inline_rerun_iframe():

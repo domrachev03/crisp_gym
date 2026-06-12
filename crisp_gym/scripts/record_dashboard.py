@@ -30,10 +30,17 @@ def main() -> None:
                    help="Rerun web-viewer HTML port (used when --rerun-url is unset).")
     p.add_argument("--rerun-ws-port", type=int, default=9877,
                    help="Rerun websocket data port (used when --rerun-url is unset).")
+    p.add_argument("--gripper-config", type=str, default=None,
+                   help="crisp_py gripper config for the Open/Close buttons (e.g. gripper_right_v2 "
+                        "or gripper_franka). Unset -> gripper buttons report 'unavailable'.")
+    p.add_argument("--gripper-namespace", type=str, default="right",
+                   help="ROS namespace of the gripper to command (default: right).")
     args = p.parse_args()
 
     logging.basicConfig(level=logging.INFO)
-    monitor = DashboardMonitor(arms=tuple(args.arms))
+    monitor = DashboardMonitor(arms=tuple(args.arms),
+                               gripper_config=args.gripper_config,
+                               gripper_namespace=args.gripper_namespace)
     monitor.start()
     app = create_app(monitor, rerun_url=args.rerun_url,
                      rerun_web_port=args.rerun_web_port, rerun_ws_port=args.rerun_ws_port)

@@ -1,21 +1,27 @@
 """Web dashboard for dataset recording: FastAPI app + the page it serves.
 
-Pure of ROS: the app talks to a ``monitor`` object with two methods --
-``snapshot() -> dict`` (latest merged status) and ``send_control(cmd) -> bool``
-(publish a recording command). The live ROS monitor that implements them lives in
-``record_dashboard_monitor`` (rclpy); tests inject a fake. This split keeps the
-routes + HTML unit-testable without a robot.
+Pure of ROS: the app talks to a ``monitor`` object with ``snapshot() -> dict``
+(latest merged status), ``send_control(cmd) -> bool`` (publish a recording command)
+and ``set_gripper(width) -> bool`` (command the gripper). The live ROS monitor that
+implements them lives in ``record_dashboard_monitor`` (rclpy); tests inject a fake.
+This split keeps the routes + HTML unit-testable without a robot.
 
 Status shape (what ``snapshot`` returns / the page renders)::
 
     {"recorder": {"connected", "state", "episode", "num_episodes", "fps",
                   "frames", "repo_id", "last_event"},
      "arms": {"right": {"force", "torque", "pos":[x,y,z]}, "left": {...}}}
+
+Layout: the rerun viewer fills the left; episode / loop-rate / arms / controls /
+gripper are stacked vertically on the right.
 """
 
 from __future__ import annotations
 
 VALID_COMMANDS = ("record", "save", "delete", "exit")
+# Gripper actions -> normalized target width (open = max, close = min), same
+# convention as franka_server_standalone (set_target 1.0 / 0.0).
+GRIPPER_WIDTHS = {"open": 1.0, "close": 0.0}
 
 
 def create_app(
@@ -27,7 +33,8 @@ def create_app(
     """Build the FastAPI dashboard app around a status ``monitor``.
 
     Args:
-        monitor: object with ``snapshot() -> dict`` and ``send_control(cmd) -> bool``.
+        monitor: object with ``snapshot() -> dict``, ``send_control(cmd) -> bool``
+            and ``set_gripper(width) -> bool``.
         rerun_url: explicit rerun web-viewer URL for the embedded iframe. When ``None``
             the page builds ``http://<host>:<web_port>?url=ws://<host>:<ws_port>`` from
             ``window.location.hostname`` so it works over an ssh tunnel and on the LAN.
@@ -59,6 +66,13 @@ def create_app(
         ok = monitor.send_control(cmd)
         return JSONResponse({"ok": bool(ok), "cmd": cmd})
 
+    @app.post("/gripper/{action}")
+    def gripper(action: str) -> JSONResponse:
+        if action not in GRIPPER_WIDTHS:
+            raise HTTPException(status_code=400, detail=f"unknown gripper action {action!r}")
+        ok = monitor.set_gripper(GRIPPER_WIDTHS[action])
+        return JSONResponse({"ok": bool(ok), "action": action})
+
     return app
 
 
@@ -69,7 +83,9 @@ DASHBOARD_HTML = """<!doctype html>
  header{padding:14px 20px;background:#161a22;border-bottom:1px solid #2a2f3a;display:flex;align-items:center;gap:16px}
  h1{font-size:16px;margin:0;font-weight:600}
  .badge{padding:4px 12px;border-radius:14px;font-weight:600;font-size:13px}
- .wrap{padding:20px;display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1000px}
+ .main{display:flex;gap:16px;padding:16px 20px;align-items:flex-start}
+ .left{flex:1.7;min-width:420px}
+ .right{flex:1;min-width:300px;max-width:430px;display:flex;flex-direction:column;gap:14px}
  .card{background:#161a22;border:1px solid #2a2f3a;border-radius:10px;padding:16px}
  .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8a93a6;margin:0 0 12px}
  .big{font-size:30px;font-weight:700}
@@ -83,10 +99,11 @@ DASHBOARD_HTML = """<!doctype html>
  .ctrls{display:flex;gap:10px;flex-wrap:wrap}
  #go{background:#1f6f3f;border-color:#2a8a50}
  #exit{background:#6f1f1f;border-color:#8a2a2a}
+ #gopen{background:#1f4f7a;border-color:#2a6a9a}
+ #gclose{background:#7a5b1f;border-color:#9a7a2a}
  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
- .rerun-wrap{padding:0 20px 24px;max-width:1000px}
  .rerun-head{display:flex;align-items:center;gap:12px;margin-bottom:10px}
- #rerun{width:100%;height:600px;border:1px solid #2a2f3a;border-radius:10px;background:#0b0d11}
+ #rerun{width:100%;height:calc(100vh - 132px);min-height:460px;border:1px solid #2a2f3a;border-radius:10px;background:#0b0d11}
  a.rerun-link{color:#7fb2ec;text-decoration:none;font-size:13px}
  a.rerun-link:hover{text-decoration:underline}
 </style></head>
@@ -97,50 +114,60 @@ DASHBOARD_HTML = """<!doctype html>
  <span id="repo" class="sub"></span>
  <span id="conn" class="sub" style="margin-left:auto"></span>
 </header>
-<div class="wrap">
- <div class="card">
-   <h2>Episode</h2>
-   <div class="big"><span id="ep">–</span> / <span id="eptot">–</span></div>
-   <div class="bar"><div id="epbar" style="width:0%"></div></div>
-   <div class="sub" style="margin-top:10px">frames this episode: <span id="frames">–</span></div>
-   <div class="sub">last: <span id="event">–</span></div>
- </div>
- <div class="card">
-   <h2>Loop rate (target 60)</h2>
-   <div class="big"><span id="fps">–</span> <span class="sub">Hz</span></div>
-   <div class="bar"><div id="fpsbar" style="width:0%"></div></div>
- </div>
- <div class="card">
-   <h2>Arms — force / EE pose</h2>
-   <div class="row"><span><span class="dot" id="rdot"></span>right |F|</span><span id="rforce">–</span></div>
-   <div class="row"><span>right pos</span><span id="rpos">–</span></div>
-   <div class="row"><span><span class="dot" id="ldot"></span>left |F|</span><span id="lforce">–</span></div>
-   <div class="row"><span>left pos</span><span id="lpos">–</span></div>
- </div>
- <div class="card">
-   <h2>Controls</h2>
-   <div class="ctrls">
-     <button id="go" onclick="ctl('record')">Start / Stop</button>
-     <button onclick="ctl('save')">Save</button>
-     <button onclick="ctl('delete')">Delete</button>
-     <button id="exit" onclick="ctl('exit')">Exit</button>
+<div class="main">
+ <div class="left">
+   <div class="rerun-head">
+     <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8a93a6;margin:0">rerun viewer</h2>
+     <a id="rerunLink" class="rerun-link" href="#" target="_blank" rel="noopener">open in new tab ↗</a>
+     <span class="sub" id="rerunMsg" style="margin-left:auto"></span>
    </div>
-   <div class="sub" id="ctlmsg" style="margin-top:10px"></div>
+   <iframe id="rerun" src="about:blank" allow="fullscreen"></iframe>
  </div>
-</div>
-<div class="rerun-wrap">
- <div class="rerun-head">
-   <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#8a93a6;margin:0">rerun viewer</h2>
-   <a id="rerunLink" class="rerun-link" href="#" target="_blank" rel="noopener">open in new tab ↗</a>
-   <span class="sub" id="rerunMsg" style="margin-left:auto"></span>
+ <div class="right">
+   <div class="card">
+     <h2>Episode</h2>
+     <div class="big"><span id="ep">–</span> / <span id="eptot">–</span></div>
+     <div class="bar"><div id="epbar" style="width:0%"></div></div>
+     <div class="sub" style="margin-top:10px">frames this episode: <span id="frames">–</span></div>
+     <div class="sub">last: <span id="event">–</span></div>
+   </div>
+   <div class="card">
+     <h2>Loop rate (target 60)</h2>
+     <div class="big"><span id="fps">–</span> <span class="sub">Hz</span></div>
+     <div class="bar"><div id="fpsbar" style="width:0%"></div></div>
+   </div>
+   <div class="card">
+     <h2>Arms — force / EE pose</h2>
+     <div class="row"><span><span class="dot" id="rdot"></span>right |F|</span><span id="rforce">–</span></div>
+     <div class="row"><span>right pos</span><span id="rpos">–</span></div>
+     <div class="row"><span><span class="dot" id="ldot"></span>left |F|</span><span id="lforce">–</span></div>
+     <div class="row"><span>left pos</span><span id="lpos">–</span></div>
+   </div>
+   <div class="card">
+     <h2>Controls</h2>
+     <div class="ctrls">
+       <button id="go" onclick="ctl('record')">Start / Stop</button>
+       <button onclick="ctl('save')">Save</button>
+       <button onclick="ctl('delete')">Delete</button>
+       <button id="exit" onclick="ctl('exit')">Exit</button>
+     </div>
+     <div class="sub" id="ctlmsg" style="margin-top:10px"></div>
+   </div>
+   <div class="card">
+     <h2>Gripper</h2>
+     <div class="ctrls">
+       <button id="gopen" onclick="grip('open')">Open</button>
+       <button id="gclose" onclick="grip('close')">Close</button>
+     </div>
+     <div class="sub" id="gripmsg" style="margin-top:10px"></div>
+   </div>
  </div>
- <iframe id="rerun" src="about:blank" allow="fullscreen"></iframe>
 </div>
 <script>
 const STATE_COLORS={recording:'#1f6f3f',is_waiting:'#7a5b1f',paused:'#1f4f7a',to_be_saved:'#1f6f3f',to_be_deleted:'#6f1f1f',exit:'#444'};
 // Rerun web viewer URL: explicit --rerun-url wins, else build from this page's host
-// (window.location.hostname) so it works over an ssh tunnel AND on the LAN.
-// Rerun viewer is embedded inline (always visible): set the iframe src on load.
+// (window.location.hostname) so it works over an ssh tunnel AND on the LAN. Embedded
+// inline (always visible): set the iframe src on load.
 let RERUN_URL=null;
 async function loadRerunConfig(){
   try{
@@ -158,6 +185,11 @@ async function ctl(cmd){
   const m=document.getElementById('ctlmsg');
   try{const r=await fetch('/control/'+cmd,{method:'POST'});const j=await r.json();
     m.textContent=(j.ok?'sent: ':'failed: ')+cmd;}catch(e){m.textContent='error: '+e;}
+}
+async function grip(action){
+  const m=document.getElementById('gripmsg');
+  try{const r=await fetch('/gripper/'+action,{method:'POST'});const j=await r.json();
+    m.textContent=(j.ok?'sent: ':'unavailable: ')+action;}catch(e){m.textContent='error: '+e;}
 }
 async function tick(){
   try{

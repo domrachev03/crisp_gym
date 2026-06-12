@@ -26,6 +26,8 @@ class DashboardMonitor:
                  control_topic: str = "/record_transition",
                  wrench_template: str = "/{ns}/netft_data_unbiased_tcp",
                  pose_template: str = "/{ns}/current_pose",
+                 gripper_config: str | None = None,
+                 gripper_namespace: str = "right",
                  stale_s: float = 2.0) -> None:
         if not rclpy.ok():
             rclpy.init()
@@ -49,6 +51,23 @@ class DashboardMonitor:
 
         self._exec = MultiThreadedExecutor()
         self._exec.add_node(self.node)
+
+        # Optional gripper: a crisp_py Gripper driven by the Open/Close buttons
+        # (set_target 1.0 / 0.0, like franka_server_standalone). Non-fatal: if it
+        # cannot be created, the buttons just report "unavailable".
+        self._gripper = None
+        if gripper_config:
+            try:
+                from crisp_py.gripper.gripper import make_gripper
+
+                self._gripper = make_gripper(
+                    gripper_config, namespace=gripper_namespace, spin_node=False)
+                self._exec.add_node(self._gripper.node)
+            except Exception as e:  # noqa: BLE001
+                self._gripper = None
+                self.node.get_logger().warning(
+                    f"gripper '{gripper_config}' (ns={gripper_namespace}) unavailable: {e}")
+
         self._thread = threading.Thread(target=self._exec.spin, daemon=True)
 
     def start(self) -> None:
@@ -86,6 +105,17 @@ class DashboardMonitor:
         msg.data = cmd
         self._control_pub.publish(msg)
         return True
+
+    def set_gripper(self, width: float) -> bool:
+        """Command the gripper to a normalized target width (1.0 open / 0.0 close)."""
+        if self._gripper is None:
+            return False
+        try:
+            self._gripper.set_target(target=float(width))
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.node.get_logger().warning(f"gripper set_target failed: {e}")
+            return False
 
     def close(self) -> None:
         try:
