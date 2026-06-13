@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import logging
 import multiprocessing as mp
 import subprocess
@@ -318,6 +319,13 @@ class RecordingManager(ABC):
         logger.info("Started recording episode.")
         self.frames_this_episode = 0
 
+        # Disable cyclic GC during the real-time capture loop: heavy per-frame
+        # allocation (obs dicts + numpy + pickling to the writer queue) otherwise
+        # triggers periodic gen2 collections that stall a frame ~40-50ms. Objects
+        # here are refcount-freed (no cycles), so this doesn't leak; GC is re-enabled
+        # + a manual collect runs once the (non-real-time) episode end is reached.
+        gc.collect()
+        gc.disable()
         while self.state == "recording":
             frame_start = time.time()
 
@@ -334,6 +342,7 @@ class RecordingManager(ABC):
                     on_end()
                 self.state = "to_be_deleted"
                 self._set_to_wait()
+                gc.enable()
                 return
 
             if obs is None or action is None:
@@ -359,6 +368,9 @@ class RecordingManager(ABC):
                 )
             logger.debug(f"Finished sleeping for {sleep_time:.3f} seconds.")
 
+        # Real-time loop done: re-enable GC and reclaim before the next episode.
+        gc.enable()
+        gc.collect()
         logger.debug("Finished recording...")
 
         if on_end:
