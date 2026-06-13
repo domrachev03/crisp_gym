@@ -148,8 +148,26 @@ class DashboardMonitor:
             return False
 
     def close(self) -> None:
+        """Stop spinning, destroy nodes, shut down rclpy. Idempotent + leaves nothing."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
         try:
-            self._exec.shutdown()
-            self.node.destroy_node()
+            self._exec.shutdown()  # makes self._exec.spin() return in the daemon thread
+        except Exception:  # noqa: BLE001
+            pass
+        if getattr(self, "_thread", None) is not None and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+        nodes = [self.node]
+        if self._gripper is not None:
+            nodes.append(self._gripper.node)
+        for node in nodes:
+            try:
+                node.destroy_node()
+            except Exception:  # noqa: BLE001
+                pass
+        try:
+            if rclpy.ok():
+                rclpy.shutdown()
         except Exception:  # noqa: BLE001
             pass

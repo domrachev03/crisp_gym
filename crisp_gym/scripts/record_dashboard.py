@@ -9,7 +9,9 @@ per-arm force+pose, with start-stop / save / delete / exit buttons (which publis
 """
 
 import argparse
+import ctypes
 import logging
+import signal
 
 import uvicorn
 
@@ -17,7 +19,20 @@ from crisp_gym.record.dashboard import create_app
 from crisp_gym.record.dashboard_monitor import DashboardMonitor
 
 
+def _die_with_parent() -> None:
+    """Linux: receive SIGTERM when the parent dies (e.g. the ``pixi run`` wrapper),
+
+    so the dashboard never orphans and keeps holding its port. uvicorn handles the
+    SIGTERM and shuts down gracefully, releasing the socket + rclpy.
+    """
+    try:
+        ctypes.CDLL("libc.so.6").prctl(1, signal.SIGTERM, 0, 0, 0)  # PR_SET_PDEATHSIG
+    except Exception:  # noqa: BLE001 -- best-effort; non-Linux just relies on signals
+        pass
+
+
 def main() -> None:
+    _die_with_parent()
     p = argparse.ArgumentParser(description="crisp_gym recording dashboard")
     p.add_argument("--host", type=str, default="0.0.0.0")
     p.add_argument("--port", type=int, default=8000)
