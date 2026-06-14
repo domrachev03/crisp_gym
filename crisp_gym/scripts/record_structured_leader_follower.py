@@ -7,6 +7,7 @@ Configs (panda env, leader, cameras) ship in crisp_gym/config.
 
 import argparse
 import logging
+import sys
 import time
 
 import numpy as np
@@ -129,6 +130,13 @@ def main():  # noqa: C901
 
     logger = logging.getLogger(__name__)
     setup_logging(level=args.log_level)
+
+    # Cap GIL hand-off latency: the 60fps record loop shares one GIL with the
+    # crisp_py executor (pose/wrench/gripper callbacks) + camera poller threads, so
+    # the default 5ms switch interval lets a background thread stall the loop tens of
+    # ms (periodic frame overruns). 1ms bounds that without measurable overhead.
+    sys.setswitchinterval(0.001)
+
     cam_fps = args.camera_fps if args.camera_fps is not None else args.fps
     for arg, value in vars(args).items():
         logger.info(f"{arg:<24}: {value}")
