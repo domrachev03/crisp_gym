@@ -1,39 +1,43 @@
 # Follower cartesian impedance for bilateral teleop.
-# The yaw divergence turned out to be the position spring's rotational gain (fixed
-# via rot_spring_k), NOT the follower PD. With that fixed, k_rot is raised to 45
-# (= franka_server reference) so the follower tracks the leader's rotation tightly
-# (at k_rot 20 the follower under-rotated the leader by ~0.10 rad / ~6 deg). d_rot
-# stays at 10. Translation gains unchanged (translation felt fine).
+# Wired from franka_server_standalone/config/control/tuned_cartesian_impedance.yaml
+# (the franka_server "tuned" reference). Stiff tracking (k_pos 3000, k_rot 55), tight
+# error clips (5 mm / 0.04 rad), nullspace 55/10, variable_max_stiffness 3200/100, plus
+# the franka_server state/output filters. Loaded onto the follower's
+# cartesian_impedance_controller at bilateral start (bilateral/runtime.py).
 # Param names match crisp CartesianController (== franka_server default_cartesian_impedance).
 limit_error: true
 limit_torques: true
 
-max_delta_tau: 0.5
+max_delta_tau: 2.0
 
-nullspace.stiffness: 5.0
+nullspace.stiffness: 55.0
+nullspace.damping: 10.0
 
 stop_commands: false
 
-task.k_pos_x: 600.0
-task.k_pos_y: 600.0
-task.k_pos_z: 600.0
-task.k_rot_x: 45.0
-task.k_rot_y: 45.0
-task.k_rot_z: 45.0
+variable_max_stiffness.translational: 3200.0
+variable_max_stiffness.rotational: 100.0
 
-task.d_pos_x: 60.0
-task.d_pos_y: 60.0
-task.d_pos_z: 60.0
-task.d_rot_x: 10.0
-task.d_rot_y: 10.0
-task.d_rot_z: 10.0
+task.k_pos_x: 3000.0
+task.k_pos_y: 3000.0
+task.k_pos_z: 3000.0
+task.k_rot_x: 55.0
+task.k_rot_y: 55.0
+task.k_rot_z: 55.0
 
-task.error_clip.rx: 0.5
-task.error_clip.ry: 0.5
-task.error_clip.rz: 0.5
-task.error_clip.x: 0.1
-task.error_clip.y: 0.1
-task.error_clip.z: 0.1
+task.d_pos_x: 90.0
+task.d_pos_y: 90.0
+task.d_pos_z: 90.0
+task.d_rot_x: 3.0
+task.d_rot_y: 3.0
+task.d_rot_z: 3.0
+
+task.error_clip.rx: 0.04
+task.error_clip.ry: 0.04
+task.error_clip.rz: 0.04
+task.error_clip.x: 0.005
+task.error_clip.y: 0.005
+task.error_clip.z: 0.005
 
 use_coriolis_compensation: true
 use_friction: true
@@ -41,3 +45,9 @@ use_gravity_compensation: false
 use_local_jacobian: true
 use_operational_space: false
 use_sim_time: false
+
+filter.target_pose: 0.1
+filter.q: 0.1
+filter.dq: 0.4
+filter.q_ref: 0.1
+filter.output_torque: 0.3
