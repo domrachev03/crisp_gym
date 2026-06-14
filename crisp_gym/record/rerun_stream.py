@@ -100,6 +100,7 @@ class RerunStreamer:
         self._last_accept = 0.0
         self._rr = None
         self._warned = False
+        self._bp_sent = False  # send the per-camera blueprint once, on the first frame
         self._queue: queue.Queue = queue.Queue(maxsize=max(1, int(buffer)))
         self._worker: threading.Thread | None = None
 
@@ -197,6 +198,28 @@ class RerunStreamer:
         viewer drains (which was the residual lag in spawn mode).
         """
         rr = self._rr
+
+        # One Spatial2D view per camera. Without an explicit blueprint the viewer's
+        # auto-layout lumps every cameras/<name> image into a SINGLE 2D view (their
+        # common ancestor), so they overlap and only the top one renders (hide it ->
+        # the other appears). Sent once, on the first frame (camera names unknown until
+        # then); non-fatal if this rerun build lacks the blueprint API.
+        if not self._bp_sent:
+            cams = [k[len("observation.images.") :] for k in obs
+                    if k.startswith("observation.images.")]
+            if cams:
+                self._bp_sent = True
+                try:
+                    import rerun.blueprint as rrb
+
+                    rr.send_blueprint(rrb.Blueprint(
+                        rrb.Grid(*[rrb.Spatial2DView(origin=f"cameras/{n}", name=n)
+                                   for n in cams]),
+                        collapse_panels=True))
+                    logger.info("rerun blueprint: one 2D view per camera (%s)", ", ".join(cams))
+                except Exception as exc:  # noqa: BLE001 -- old rerun w/o blueprint API; harmless
+                    logger.warning("rerun blueprint setup failed (%s: %s); cameras may share a view.",
+                                   type(exc).__name__, exc)
 
         for key, value in obs.items():
             if key.startswith("observation.images."):
