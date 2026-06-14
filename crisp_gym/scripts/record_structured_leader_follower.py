@@ -7,6 +7,7 @@ Configs (panda env, leader, cameras) ship in crisp_gym/config.
 
 import argparse
 import logging
+import time
 
 import numpy as np
 import rclpy
@@ -42,12 +43,23 @@ def _with_rerun(data_fn: callable, rerun: RerunStreamer) -> callable:
     ``(None, None)`` priming the teleop fn is ignored. rerun logging is non-fatal.
     """
 
+    last: dict = {}
+
     def _fn() -> tuple:
         obs, action = data_fn()
         if obs is not None:
+            r0 = time.perf_counter()
             rerun.log_frame(obs)
+            # Forward the inner fn's sub-stage timings + add rerun's own cost, so the
+            # loop's timing dump still sees per-stage breakdown through this wrapper.
+            inner = getattr(data_fn, "last_timings", None)
+            last.clear()
+            if inner:
+                last.update(inner)
+            last["rerun"] = time.perf_counter() - r0
         return obs, action
 
+    _fn.last_timings = last
     return _fn
 
 
