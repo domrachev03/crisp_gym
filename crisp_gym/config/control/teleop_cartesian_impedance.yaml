@@ -1,8 +1,8 @@
 # Follower cartesian impedance for bilateral teleop.
 # Wired from franka_server_standalone/config/control/tuned_cartesian_impedance.yaml
-# (the franka_server "tuned" reference). Stiff tracking (k_pos 3000, k_rot 55), tight
-# error clips (5 mm / 0.04 rad), nullspace 55/10, variable_max_stiffness 3200/100, plus
-# the franka_server state/output filters. Loaded onto the follower's
+# (the franka_server "tuned" reference). Stiff tracking (k_pos 3000, k_rot 55),
+# variable_max_stiffness 3200/100, + the franka_server state/output filters. Nullspace
+# kept at the old 5.0 (no damping) and error_clip removed per follower tuning. Loaded onto the follower's
 # cartesian_impedance_controller at bilateral start (bilateral/runtime.py).
 # Param names match crisp CartesianController (== franka_server default_cartesian_impedance).
 limit_error: true
@@ -10,8 +10,7 @@ limit_torques: true
 
 max_delta_tau: 2.0
 
-nullspace.stiffness: 55.0
-nullspace.damping: 10.0
+nullspace.stiffness: 5.0
 
 stop_commands: false
 
@@ -31,13 +30,6 @@ task.d_pos_z: 90.0
 task.d_rot_x: 3.0
 task.d_rot_y: 3.0
 task.d_rot_z: 3.0
-
-task.error_clip.rx: 0.04
-task.error_clip.ry: 0.04
-task.error_clip.rz: 0.04
-task.error_clip.x: 0.005
-task.error_clip.y: 0.005
-task.error_clip.z: 0.005
 
 use_coriolis_compensation: true
 use_friction: true
