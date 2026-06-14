@@ -93,7 +93,7 @@ def main():  # noqa: C901
                    help="Camera config under cameras/, or 'none'.")
     p.add_argument("--camera-read-timeout-ms", type=int, default=600,
                    help="Per-frame RealSense read timeout; a stall beyond this nullifies the episode.")
-    p.add_argument("--image-writer-threads", type=int, default=8,
+    p.add_argument("--image-writer-threads", type=int, default=16,
                    help="Async image-writer threads (0 = synchronous; processes deadlock with ROS).")
     p.add_argument("--no-target", dest="include_target", action="store_false", default=True)
     p.add_argument("--rerun", action=argparse.BooleanOptionalAction, default=False,
@@ -184,7 +184,7 @@ def main():  # noqa: C901
             recording_manager_type=args.recording_manager_type,
             features=features, repo_id=args.repo_id, robot_type=args.robot_type,
             num_episodes=args.num_episodes, fps=args.fps, resume=args.resume,
-            push_to_hub=args.push_to_hub, queue_size=64,
+            push_to_hub=args.push_to_hub, queue_size=128,
             image_writer_threads=args.image_writer_threads, image_writer_processes=0,
         )
         rm.wait_until_ready()
