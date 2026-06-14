@@ -38,6 +38,9 @@ class RecordingManagerConfig:
     image_writer_threads: int = 8
     image_writer_processes: int = 0
 
+    # Optional per-frame timing dump (jsonl path); None disables it.
+    timing_log: str | None = None
+
     @classmethod
     def from_yaml(cls, yaml_path: Path | str, **overrides) -> "RecordingManagerConfig":  # noqa: ANN003
         """Create a RecordingManagerConfig from a YAML file.

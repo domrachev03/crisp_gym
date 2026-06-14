@@ -466,11 +466,19 @@ def make_structured_bilateral_fn(env, leader, controller, hrate: HrateManager,
 
     signals = signals if signals is not None else DEFAULT_SIGNALS
 
+    last: dict[str, float] = {}
+
     def _fn() -> tuple:
+        c0 = time.perf_counter()
         t_ref = time.time()
         tel = controller.step()             # commands leader + follower
+        c1 = time.perf_counter()
         follower_obs = env._get_obs()       # read-only: controller already commanded
-        obs = _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals, include_target)
+        c2 = time.perf_counter()
+        sub: dict[str, float] = {}
+        obs = _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals,
+                            include_target, _timing=sub)
+        c3 = time.perf_counter()
         obs.update(telemetry_obs_fields(tel))
         gripper_action = _leader_gripper_to_action(
             leader_value=leader.gripper.value if leader.gripper is not None else 0.0,
@@ -478,21 +486,33 @@ def make_structured_bilateral_fn(env, leader, controller, hrate: HrateManager,
             control_mode=env.config.gripper_mode,
         )
         action = bilateral_action(tel, gripper_action)
+        c4 = time.perf_counter()
+        last.clear()
+        last.update(ctrl=c1 - c0, env=c2 - c1, assemble=c3 - c2, finish=c4 - c3,
+                    cam=sub.get("cam", 0.0), hrate=sub.get("hrate", 0.0))
         return obs, action
 
+    _fn.last_timings = last
     return _fn
 
 
-def _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals, include_target) -> dict:
+def _assemble_obs(follower_obs, env, leader, hrate, cams, t_ref, signals, include_target,
+                  _timing=None) -> dict:
     obs = {
         "observation.follower_state": follower_state_from_obs(follower_obs, env, include_target),
         "observation.leader_state": leader_state(leader, env, include_target),
     }
+    _h0 = time.perf_counter()
     for arm in ("follower", "leader"):
         for sig in signals:
             values, times = hrate.snapshot(f"{arm}_{sig}", t_ref)
             obs[f"observation.{arm}_{sig}_hrate"] = values
             obs[f"observation.{arm}_{sig}_hrate_time"] = times
+    if _timing is not None:
+        _timing["hrate"] = time.perf_counter() - _h0
     if cams is not None:
+        _c0 = time.perf_counter()
         obs.update(cams.read())
+        if _timing is not None:
+            _timing["cam"] = time.perf_counter() - _c0
     return obs

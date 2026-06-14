@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import json
 import logging
 import multiprocessing as mp
 import subprocess
@@ -326,8 +327,15 @@ class RecordingManager(ABC):
         # + a manual collect runs once the (non-real-time) episode end is reached.
         gc.collect()
         gc.disable()
+
+        # Opt-in per-frame timing dump (jsonl): localizes where the frame budget goes
+        # -- data_fn() vs queue.put() (writer back-pressure) vs the data_fn sub-stages
+        # -- plus the writer queue depth (qsize near qmax => writer can't keep up).
+        timing_fh = open(self.config.timing_log, "a") if self.config.timing_log else None
+        budget_ms = 1000.0 / self.config.fps
         while self.state == "recording":
             frame_start = time.time()
+            _t0 = time.perf_counter()
 
             try:
                 obs, action = data_fn()
@@ -343,7 +351,10 @@ class RecordingManager(ABC):
                 self.state = "to_be_deleted"
                 self._set_to_wait()
                 gc.enable()
+                if timing_fh is not None:
+                    timing_fh.close()
                 return
+            _t_data = time.perf_counter() - _t0
 
             if obs is None or action is None:
                 logger.debug("Data function returned None, skipping frame.")
@@ -352,11 +363,33 @@ class RecordingManager(ABC):
                 time.sleep(sleep_time)
                 continue
 
+            _tp = time.perf_counter()
             self.queue.put({"type": "FRAME", "data": (obs, action, task)})
+            _t_put = time.perf_counter() - _tp
             self.frames_this_episode += 1
             dt = time.time() - frame_start
             if dt > 0:  # EMA of the achieved loop rate (dashboard fps gauge)
                 self.fps_measured = 0.9 * self.fps_measured + 0.1 * (1.0 / dt) if self.fps_measured else 1.0 / dt
+
+            if timing_fh is not None:
+                try:
+                    qsize = self.queue.qsize()
+                except NotImplementedError:  # qsize() unsupported on some platforms
+                    qsize = -1
+                rec = {
+                    "step": self.frames_this_episode,
+                    "t": frame_start,
+                    "data_ms": round(_t_data * 1000.0, 3),
+                    "put_ms": round(_t_put * 1000.0, 3),
+                    "total_ms": round((time.perf_counter() - _t0) * 1000.0, 3),
+                    "budget_ms": round(budget_ms, 3),
+                    "qsize": qsize,
+                    "qmax": self.config.queue_size,
+                }
+                stages = getattr(data_fn, "last_timings", None)
+                if stages:
+                    rec.update({f"d_{k}_ms": round(v * 1000.0, 3) for k, v in stages.items()})
+                timing_fh.write(json.dumps(rec) + "\n")
 
             sleep_time = 1 / self.config.fps - (time.time() - frame_start)
             if sleep_time > 0:
@@ -371,6 +404,9 @@ class RecordingManager(ABC):
         # Real-time loop done: re-enable GC and reclaim before the next episode.
         gc.enable()
         gc.collect()
+        if timing_fh is not None:
+            timing_fh.flush()
+            timing_fh.close()
         logger.debug("Finished recording...")
 
         if on_end:
