@@ -71,7 +71,9 @@ def main():  # noqa: C901
     p.add_argument("--tasks", type=str, nargs="+", default=["pick the lego block."])
     p.add_argument("--robot-type", type=str, default="panda")
     p.add_argument("--fps", type=int, default=60, help="Record frame rate (RealSense run at this fps).")
-    p.add_argument("--camera-fps", type=int, default=None, help="Camera fps (default: --fps).")
+    p.add_argument("--camera-fps", type=int, default=30,
+                   help="Camera fps (default 30, decoupled from --fps). Two RealSense at "
+                        "--fps=60 starve shared USB -> a camera stalls and nullifies episodes.")
     p.add_argument("--num-episodes", type=int, default=50)
     p.add_argument("--resume", action="store_true", default=False)
     p.add_argument("--push-to-hub", action=argparse.BooleanOptionalAction, default=False)
@@ -137,7 +139,7 @@ def main():  # noqa: C901
     # ms (periodic frame overruns). 1ms bounds that without measurable overhead.
     sys.setswitchinterval(0.001)
 
-    cam_fps = args.camera_fps if args.camera_fps is not None else args.fps
+    cam_fps = args.camera_fps if args.camera_fps is not None else args.fps  # default 30, decoupled from --fps
     for arg, value in vars(args).items():
         logger.info(f"{arg:<24}: {value}")
 

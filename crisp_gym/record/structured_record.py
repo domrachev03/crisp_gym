@@ -255,13 +255,27 @@ class CameraReader:
             time.sleep(0.02)
 
     def _poll(self, name: str, cam) -> None:
+        fails = 0
         while not self._stop.is_set():
             try:
                 frame = np.asarray(cam.async_read(timeout_ms=self.read_timeout_ms))
                 with self._lock:
                     self._latest[name] = frame
                     self._last_t[name] = time.time()
+                fails = 0
             except Exception:  # noqa: BLE001 -- transient stall; staleness is checked in read()
+                fails += 1
+                # After consecutive stalls the stream is likely wedged (USB hiccup); a
+                # bare retry won't recover it, so reconnect to self-heal -- otherwise the
+                # camera stays dead until the whole recorder restarts.
+                if fails >= 2:
+                    try:
+                        cam.disconnect()
+                        cam.connect()
+                        logger.warning("camera '%s' stalled %dx; reconnected.", name, fails)
+                    except Exception:  # noqa: BLE001 -- best-effort; keep retrying
+                        pass
+                    fails = 0
                 continue
 
     def read(self) -> dict[str, np.ndarray]:
