@@ -133,6 +133,9 @@ def parse_args() -> argparse.Namespace:
                         "poller process so their callbacks don't starve the control loop's GIL.")
     p.add_argument("--wrench-cores", type=int, nargs="+", default=None,
                    help="CPU cores to pin the wrench poller process to (e.g. --wrench-cores 26 27).")
+    p.add_argument("--timing", action="store_true", default=False,
+                   help="Log per-tick read/compute/publish ms breakdown to the telemetry jsonl "
+                        "(diagnose where a slow tick spends its time).")
     return p.parse_args()
 
 
@@ -186,6 +189,7 @@ def main() -> None:
     controller = build_bilateral_controller(env, leader, config, dt=dt,
                                              wrench_process=args.wrench_process,
                                              wrench_cores=args.wrench_cores)
+    controller.perf = args.timing  # per-tick read/compute/publish breakdown into telemetry
     log_path = None if args.no_log else (args.log or f"/tmp/bilateral_{config.scheme}.jsonl")
     telem = TeleopLogger() if log_path else None
 
@@ -235,6 +239,7 @@ def main() -> None:
                     spring_force=tel.spring_force, forward_force=tel.forward_force,
                     follower_wrench=tel.follower_wrench, leader_wrench=tel.leader_wrench,
                     delay_steps=tel.delay_steps, control_dt=tel.control_dt, loop_dt=meas_dt,
+                    **controller.last_timings,
                 )
             meas_periods.append(meas_dt)
             # Absolute-time pacing: advance the schedule by one nominal period and sleep

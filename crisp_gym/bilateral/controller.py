@@ -29,6 +29,7 @@ fix for the per-axis over-damping the old recorder path exhibited.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -108,6 +109,8 @@ class BilateralController:
         self._prev_leader = self.leader_home.copy()         # relative increment anchor
         self._follower_target = self.follower_home.copy()   # relative integrated target
         self._step = 0
+        self.perf = False              # set True to populate last_timings each step
+        self.last_timings: dict = {}   # read/compute/publish ms breakdown when perf
 
     def reanchor(self) -> None:
         """Re-capture the leader/follower homes at their current pose and reset the
@@ -152,11 +155,15 @@ class BilateralController:
         """
         cfg = self.config
         dt = self.dt if dt is None else float(dt)
+        perf = self.perf
+        t0 = time.perf_counter() if perf else 0.0
+        pub = 0.0  # accumulated time spent in the (DDS-publishing) command calls
 
         leader_pos = np.asarray(self.leader.position, dtype=float)
         follower_pos = np.asarray(self.follower.position, dtype=float)
         leader_w = np.asarray(self.leader.wrench, dtype=float)
         follower_w = np.asarray(self.follower.wrench, dtype=float)
+        t_read = time.perf_counter() if perf else 0.0
 
         # --- forward position: leader -> follower target ------------------------
         if cfg.coupling == "absolute":
@@ -167,7 +174,12 @@ class BilateralController:
             self._prev_leader = leader_pos
             self._follower_target = self._follower_target + self.ch_fwd_pos.receive()
             commanded = self._follower_target
-        self.follower.set_target_position(commanded)
+        if perf:
+            _p = time.perf_counter()
+            self.follower.set_target_position(commanded)
+            pub += time.perf_counter() - _p
+        else:
+            self.follower.set_target_position(commanded)
 
         # --- forward force (4-ch): leader wrench -> follower feed-forward --------
         # Clamped (parity with the reflected force) so a leader-wrench spike cannot
@@ -182,7 +194,12 @@ class BilateralController:
             fwd_gain = cfg.force_fwd_gain if cfg.force_fwd_gain is not None else cfg.feedback_gain
             self.ch_fwd_force.send(fwd_gain * leader_w)
             forward_force = self._clamp_force(self.ch_fwd_force.receive())
-            self.follower.set_feedforward_force(forward_force)
+            if perf:
+                _p = time.perf_counter()
+                self.follower.set_feedforward_force(forward_force)
+                pub += time.perf_counter() - _p
+            else:
+                self.follower.set_feedforward_force(forward_force)
 
         # --- return force: follower wrench -> leader feed-forward ---------------
         reflected = np.zeros(self.dof)
@@ -207,7 +224,12 @@ class BilateralController:
         leader_ff = reflected + spring
         if human_force is not None:
             leader_ff = leader_ff + np.asarray(human_force, dtype=float)
-        self.leader.set_feedforward_force(leader_ff)
+        if perf:
+            _p = time.perf_counter()
+            self.leader.set_feedforward_force(leader_ff)
+            pub += time.perf_counter() - _p
+        else:
+            self.leader.set_feedforward_force(leader_ff)
 
         tel = TeleopTelemetry(
             step=self._step,
@@ -223,5 +245,13 @@ class BilateralController:
             delay_steps=cfg.delay_steps,
             control_dt=dt,
         )
+        if perf:
+            tend = time.perf_counter()
+            self.last_timings = {
+                "read_ms": (t_read - t0) * 1e3,        # property reads (blocked crisp_py state)
+                "pub_ms": pub * 1e3,                   # DDS-publishing command calls
+                "compute_ms": (tend - t_read - pub) * 1e3,  # channels/TDPA/clamp numpy
+                "step_ms": (tend - t0) * 1e3,
+            }
         self._step += 1
         return tel
