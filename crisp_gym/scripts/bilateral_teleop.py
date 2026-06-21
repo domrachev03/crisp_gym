@@ -127,6 +127,11 @@ def parse_args() -> argparse.Namespace:
                         "(needs CAP_SYS_NICE/root; best-effort, non-fatal).")
     p.add_argument("--rt-cpu", type=int, default=None,
                    help="Pin the control thread to this CPU core (best-effort, non-fatal).")
+    p.add_argument("--wrench-process", action="store_true", default=False,
+                   help="Offload the NetFT wrench subscriptions (~2.1kHz x2) to a separate "
+                        "poller process so their callbacks don't starve the control loop's GIL.")
+    p.add_argument("--wrench-cores", type=int, nargs="+", default=None,
+                   help="CPU cores to pin the wrench poller process to (e.g. --wrench-cores 26 27).")
     return p.parse_args()
 
 
@@ -177,7 +182,9 @@ def main() -> None:
     env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=0.0))
     env.reset()
 
-    controller = build_bilateral_controller(env, leader, config, dt=dt)
+    controller = build_bilateral_controller(env, leader, config, dt=dt,
+                                             wrench_process=args.wrench_process,
+                                             wrench_cores=args.wrench_cores)
     log_path = None if args.no_log else (args.log or f"/tmp/bilateral_{config.scheme}.jsonl")
     telem = TeleopLogger() if log_path else None
 
@@ -240,6 +247,8 @@ def main() -> None:
         logger.info("Stopping.")
         _hold_leader(leader)  # ROS context still valid here -> hold actually applies
         _log_rate_stats(meas_periods, overruns, config.control_frequency)
+        if getattr(controller, "wrench_proc", None) is not None:
+            controller.wrench_proc.close()  # stop the poller process + free shared memory
         if telem is not None and log_path:
             telem.to_jsonl(log_path)
             logger.info(f"Wrote telemetry: {log_path}")

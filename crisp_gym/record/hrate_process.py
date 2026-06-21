@@ -111,6 +111,14 @@ class HrateProcessManager:
         values, times = self._rings[key].snapshot(t_ref)
         return values.astype(np.float32), times.astype(np.float32)
 
+    def count(self, key: str) -> int:
+        """Total samples the poller has written for ``key`` (0 until first message).
+
+        Lets a consumer wait for the spawned process to start delivering before it
+        relies on the latest value (e.g. a control loop or a bias capture).
+        """
+        return self._rings[key].count
+
     def close(self) -> None:
         """Stop the poller process and release shared memory."""
         try:

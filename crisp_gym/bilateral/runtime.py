@@ -63,8 +63,67 @@ def _subscribe_wrench(node, topic: str, bias_seconds: float = 0.0):
     return lambda: latest - bias
 
 
+def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
+                          cores: list[int] | None) -> tuple:
+    """Offload the NetFT wrench subscriptions to a separate poller process.
+
+    The in-process subscriptions fire at the sensor's native ~2.1 kHz on the control
+    thread's GIL (x2 arms), starving the control loop below its target rate. This
+    moves them to a dedicated process (own GIL) writing the latest value into a
+    1-deep shared-memory ring per arm; the control loop reads that latest value
+    each tick instead of servicing kHz callbacks.
+
+    Returns ``(leader_wrench_fn, follower_wrench_fn, manager)``; ``manager`` is the
+    ``HrateProcessManager`` to ``close()`` on shutdown (``None`` if no force channel).
+    """
+    from crisp_gym.record.hrate_process import HrateProcessManager
+
+    specs = []
+    if config.force:
+        specs.append(("follower_ft", config.follower_wrench_topic, "ft", 1))
+    if config.force_fwd or config.tdpa:
+        specs.append(("leader_ft", config.leader_wrench_topic, "ft", 1))
+    if not specs:
+        return None, None, None
+
+    mgr = HrateProcessManager(specs, core_affinity=cores)
+
+    def _raw(key: str) -> np.ndarray:
+        vals, _ = mgr.snapshot(key, 0.0)  # window=1 -> latest sample is the last row
+        return np.asarray(vals[-1], dtype=float)
+
+    # Wait for the spawned process to start delivering before relying on the value.
+    t_end = time.time() + 5.0
+    while time.time() < t_end and any(mgr.count(k) == 0 for k, *_ in specs):
+        time.sleep(0.05)
+    for k, *_ in specs:
+        if mgr.count(k) == 0:
+            logger.warning(f"wrench poller '{k}' delivered no samples yet (topic up?).")
+
+    follower_fn = None
+    if config.force:
+        bias = np.zeros(6)
+        if bias_seconds > 0.0:
+            logger.info(f"Capturing follower wrench bias from poller (keep arm still "
+                        f"{bias_seconds:.1f}s)...")
+            samples = []
+            t_end = time.time() + bias_seconds
+            while time.time() < t_end:
+                samples.append(_raw("follower_ft"))
+                time.sleep(0.02)
+            bias = np.mean(samples, axis=0) if samples else np.zeros(6)
+        follower_fn = lambda: _raw("follower_ft") - bias  # noqa: E731
+
+    leader_fn = None
+    if config.force_fwd or config.tdpa:
+        leader_fn = lambda: _raw("leader_ft")  # already unbiased; ~ human force  # noqa: E731
+
+    return leader_fn, follower_fn, mgr
+
+
 def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float | None = None,
-                               bias_seconds: float = 1.0) -> BilateralController:
+                               bias_seconds: float = 1.0, wrench_process: bool = False,
+                               wrench_cores: list[int] | None = None) -> BilateralController:
     """Construct the controller for ``config`` against the live ``env`` + ``leader``.
 
     Args:
@@ -73,10 +132,14 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         config: the bilateral scheme.
         dt: control timestep (defaults to ``1 / config.control_frequency``).
         bias_seconds: follower wrench bias capture duration.
+        wrench_process: offload the NetFT wrench subs to a separate poller process
+            (own GIL) so the ~2.1 kHz x2 callbacks don't starve the control loop.
+        wrench_cores: optional CPU cores to pin that poller process to.
     """
     follower_robot = env.robot
     leader_robot = leader.robot
     dt = dt if dt is not None else 1.0 / config.control_frequency
+    wrench_proc = None  # set when wrench_process offloads NetFT to a poller process
 
     if config.mode == "joint":
         leader_home = np.asarray(leader_robot.joint_values, dtype=float).copy()
@@ -94,15 +157,19 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         leader_home = pose_to_vec(leader_robot.end_effector_pose)
         follower_home = pose_to_vec(follower_robot.end_effector_pose)
 
-        follower_wrench_fn = None
-        if config.force:
-            follower_wrench_fn = _subscribe_wrench(
-                follower_robot.node, config.follower_wrench_topic, bias_seconds
-            )
-        leader_wrench_fn = None
-        if config.force_fwd or config.tdpa:
-            # leader netft (already unbiased) ~ human applied force; no extra bias
-            leader_wrench_fn = _subscribe_wrench(leader_robot.node, config.leader_wrench_topic, 0.0)
+        if wrench_process:
+            leader_wrench_fn, follower_wrench_fn, wrench_proc = _build_wrench_process(
+                config, bias_seconds, wrench_cores)
+        else:
+            follower_wrench_fn = None
+            if config.force:
+                follower_wrench_fn = _subscribe_wrench(
+                    follower_robot.node, config.follower_wrench_topic, bias_seconds
+                )
+            leader_wrench_fn = None
+            if config.force_fwd or config.tdpa:
+                # leader netft (already unbiased) ~ human applied force; no extra bias
+                leader_wrench_fn = _subscribe_wrench(leader_robot.node, config.leader_wrench_topic, 0.0)
 
         # lower the follower's cartesian rotational PD for teleop (stiff/undamped
         # yaw was hard to rotate and diverged); translation gains unchanged.
@@ -130,4 +197,6 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         f"force={config.force} force_fwd={config.force_fwd} pos_spring={config.pos_spring} "
         f"tdpa={config.tdpa} delay_steps={config.delay_steps}"
     )
-    return BilateralController(leader_adapter, follower_adapter, config, dt=dt)
+    ctrl = BilateralController(leader_adapter, follower_adapter, config, dt=dt)
+    ctrl.wrench_proc = wrench_proc  # caller closes it on shutdown (None if in-process)
+    return ctrl
