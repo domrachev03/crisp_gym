@@ -15,6 +15,7 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 import os
 import signal
@@ -208,6 +209,11 @@ def main() -> None:
     prev = None                     # previous tick stamp -> measured period
     meas_periods: list[float] = []
     overruns = 0
+    # step() allocates many small arrays per tick; a periodic gen2 collection then
+    # stalls the loop 20-40ms. Disable cyclic GC for the run (refcounting still frees
+    # the temporaries) and re-enable on exit -- same trick the recorder uses.
+    gc.collect()
+    gc.disable()
     try:
         while not stop["flag"]:
             now = time.monotonic()
@@ -244,6 +250,7 @@ def main() -> None:
                 overruns += 1
                 next_t = time.monotonic()
     finally:
+        gc.enable()
         logger.info("Stopping.")
         _hold_leader(leader)  # ROS context still valid here -> hold actually applies
         _log_rate_stats(meas_periods, overruns, config.control_frequency)
