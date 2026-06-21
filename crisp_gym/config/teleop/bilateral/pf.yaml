@@ -1,5 +1,7 @@
 # Position-force: leader pose -> follower target, follower wrench -> leader.
-# HW-validated scheme (gain 1.0, soft deadband to null the free-space noise floor).
+# HW-validated scheme (soft deadband to null the free-space noise floor).
+# feedback_gain lowered 1.0 -> 0.6 to stabilize contact (reflected-force loop gain
+# was pumping a ~3Hz limit cycle in the follower's soft rotational impedance).
 scheme: pf
 mode: cartesian
 coupling: absolute
@@ -9,7 +11,7 @@ pos_spring: false
 tdpa: false
 control_frequency: 100.0
 delay_steps: 0
-feedback_gain: 1.0
+feedback_gain: 0.6
 feedback_sign: 1.0
 feedback_max_force: 30.0
 contact_threshold_n: 1.0
