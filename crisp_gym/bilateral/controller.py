@@ -111,6 +111,7 @@ class BilateralController:
         self._step = 0
         self.perf = False              # set True to populate last_timings each step
         self.last_timings: dict = {}   # read/compute/publish ms breakdown when perf
+        self.wrench_age_fns: list = [] # () -> seconds since last fresh wrench (staleness guard)
 
     def reanchor(self) -> None:
         """Re-capture the leader/follower homes at their current pose and reset the

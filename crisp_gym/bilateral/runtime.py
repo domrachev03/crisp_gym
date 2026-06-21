@@ -36,17 +36,22 @@ logger = logging.getLogger(__name__)
 
 
 def _subscribe_wrench(node, topic: str, bias_seconds: float = 0.0):
-    """Subscribe to a NetFT ``WrenchStamped`` topic; return a getter of the live
-    (optionally bias-subtracted) TCP wrench ``(6,)``.
+    """Subscribe to a NetFT ``WrenchStamped`` topic; return ``(value_fn, age_fn)``.
+
+    ``value_fn()`` -> the live (optionally bias-subtracted) TCP wrench ``(6,)``.
+    ``age_fn()`` -> seconds since the last message (``inf`` before the first), so the
+    loop can detect a stale/dead F/T feed and stop.
 
     A non-zero ``bias_seconds`` averages the wrench at rest (keep the arm still) and
     subtracts it — used for the follower so the free-space noise floor is nulled.
     """
     latest = np.zeros(6)
+    last_t = [0.0]  # wall-clock of the most recent message
 
     def _cb(msg: WrenchStamped) -> None:
         w = msg.wrench
         latest[:] = (w.force.x, w.force.y, w.force.z, w.torque.x, w.torque.y, w.torque.z)
+        last_t[0] = time.time()
 
     node.create_subscription(WrenchStamped, topic, _cb, qos_profile_sensor_data)
 
@@ -60,7 +65,9 @@ def _subscribe_wrench(node, topic: str, bias_seconds: float = 0.0):
             time.sleep(0.02)
         bias = np.mean(samples, axis=0) if samples else np.zeros(6)
 
-    return lambda: latest - bias
+    value_fn = lambda: latest - bias  # noqa: E731
+    age_fn = lambda: (time.time() - last_t[0]) if last_t[0] > 0.0 else float("inf")  # noqa: E731
+    return value_fn, age_fn
 
 
 def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
@@ -73,8 +80,10 @@ def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
     1-deep shared-memory ring per arm; the control loop reads that latest value
     each tick instead of servicing kHz callbacks.
 
-    Returns ``(leader_wrench_fn, follower_wrench_fn, manager)``; ``manager`` is the
-    ``HrateProcessManager`` to ``close()`` on shutdown (``None`` if no force channel).
+    Returns ``(leader_wrench_fn, follower_wrench_fn, manager, age_fns)``; ``manager``
+    is the ``HrateProcessManager`` to ``close()`` on shutdown (``None`` if no force
+    channel), ``age_fns`` a list of ``() -> seconds since last sample`` staleness
+    probes (one per active wrench source) for the loop's stale-F/T guard.
     """
     from crisp_gym.record.hrate_process import HrateProcessManager
 
@@ -84,13 +93,21 @@ def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
     if config.force_fwd or config.tdpa:
         specs.append(("leader_ft", config.leader_wrench_topic, "ft", 1))
     if not specs:
-        return None, None, None
+        return None, None, None, []
 
     mgr = HrateProcessManager(specs, core_affinity=cores)
 
     def _raw(key: str) -> np.ndarray:
         vals, _ = mgr.snapshot(key, 0.0)  # window=1 -> latest sample is the last row
         return np.asarray(vals[-1], dtype=float)
+
+    def _age(key: str) -> float:
+        # snapshot times are sample_wallclock - t_ref; with t_ref=now the latest is
+        # -age. count==0 (poller delivered nothing) reads as infinitely stale.
+        if mgr.count(key) == 0:
+            return float("inf")
+        _, times = mgr.snapshot(key, time.time())
+        return max(0.0, -float(times[-1]))
 
     # Wait for the spawned process to start delivering before relying on the value.
     t_end = time.time() + 5.0
@@ -118,7 +135,8 @@ def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
     if config.force_fwd or config.tdpa:
         leader_fn = lambda: _raw("leader_ft")  # already unbiased; ~ human force  # noqa: E731
 
-    return leader_fn, follower_fn, mgr
+    age_fns = [(lambda k=k: _age(k)) for k, *_ in specs]  # one staleness probe per source
+    return leader_fn, follower_fn, mgr, age_fns
 
 
 def _drop_joint_subscription(robot) -> bool:  # noqa: ANN001
@@ -163,6 +181,7 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
     leader_robot = leader.robot
     dt = dt if dt is not None else 1.0 / config.control_frequency
     wrench_proc = None  # set when wrench_process offloads NetFT to a poller process
+    wrench_age_fns: list = []  # staleness probes for the loop's stale-F/T guard
 
     if config.mode == "joint":
         leader_home = np.asarray(leader_robot.joint_values, dtype=float).copy()
@@ -181,18 +200,22 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         follower_home = pose_to_vec(follower_robot.end_effector_pose)
 
         if wrench_process:
-            leader_wrench_fn, follower_wrench_fn, wrench_proc = _build_wrench_process(
+            (leader_wrench_fn, follower_wrench_fn,
+             wrench_proc, wrench_age_fns) = _build_wrench_process(
                 config, bias_seconds, wrench_cores)
         else:
             follower_wrench_fn = None
             if config.force:
-                follower_wrench_fn = _subscribe_wrench(
+                follower_wrench_fn, follower_age_fn = _subscribe_wrench(
                     follower_robot.node, config.follower_wrench_topic, bias_seconds
                 )
+                wrench_age_fns.append(follower_age_fn)
             leader_wrench_fn = None
             if config.force_fwd or config.tdpa:
                 # leader netft (already unbiased) ~ human applied force; no extra bias
-                leader_wrench_fn = _subscribe_wrench(leader_robot.node, config.leader_wrench_topic, 0.0)
+                leader_wrench_fn, leader_age_fn = _subscribe_wrench(
+                    leader_robot.node, config.leader_wrench_topic, 0.0)
+                wrench_age_fns.append(leader_age_fn)
 
         # lower the follower's cartesian rotational PD for teleop (stiff/undamped
         # yaw was hard to rotate and diverged); translation gains unchanged.
@@ -226,5 +249,6 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         f"tdpa={config.tdpa} delay_steps={config.delay_steps}"
     )
     ctrl = BilateralController(leader_adapter, follower_adapter, config, dt=dt)
-    ctrl.wrench_proc = wrench_proc  # caller closes it on shutdown (None if in-process)
+    ctrl.wrench_proc = wrench_proc          # caller closes it on shutdown (None if in-process)
+    ctrl.wrench_age_fns = wrench_age_fns    # loop's stale-F/T guard probes
     return ctrl

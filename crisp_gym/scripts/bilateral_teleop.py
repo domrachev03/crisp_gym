@@ -139,6 +139,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--keep-joint-sub", action="store_true", default=False,
                    help="Keep crisp_py's joint_states sub (~1kHz x2). By default it is dropped in "
                         "cartesian mode (unused there) to cut its callbacks off the control GIL.")
+    p.add_argument("--ft-stale-timeout", type=float, default=0.1,
+                   help="Stop teleop if no fresh F/T sample arrives for this many seconds. A "
+                        "stale/dead wrench means the reflected force is wrong (unsafe). Normal "
+                        "scheduling hiccups freeze the feed up to ~20ms, so keep this well above "
+                        "that. 0 disables the guard.")
     return p.parse_args()
 
 
@@ -217,6 +222,8 @@ def main() -> None:
     prev = None                     # previous tick stamp -> measured period
     meas_periods: list[float] = []
     overruns = 0
+    age_fns = getattr(controller, "wrench_age_fns", [])  # stale-F/T guard probes
+    stale_timeout = args.ft_stale_timeout
     # step() allocates many small arrays per tick; a periodic gen2 collection then
     # stalls the loop 20-40ms. Disable cyclic GC for the run (refcounting still frees
     # the temporaries) and re-enable on exit -- same trick the recorder uses.
@@ -225,6 +232,13 @@ def main() -> None:
     try:
         while not stop["flag"]:
             now = time.monotonic()
+            # Stale-F/T guard: a dead/stalled wrench feed makes the reflected force
+            # wrong (it keeps reflecting an old value). Stop before commanding it.
+            ft_age = max((f() for f in age_fns), default=0.0)
+            if stale_timeout > 0.0 and ft_age > stale_timeout:
+                logger.error("F/T STALE: no fresh wrench for %.0fms (> %.0fms). "
+                             "Stopping teleop for safety.", ft_age * 1e3, stale_timeout * 1e3)
+                break
             # Feed the REAL measured period to the control law so TDPA energy
             # (power*dt, alpha=E/(V^2*dt)) and any dt-based term match wall time
             # instead of the nominal 1/freq. Clamp pathological gaps (first tick /
@@ -243,7 +257,7 @@ def main() -> None:
                     spring_force=tel.spring_force, forward_force=tel.forward_force,
                     follower_wrench=tel.follower_wrench, leader_wrench=tel.leader_wrench,
                     delay_steps=tel.delay_steps, control_dt=tel.control_dt, loop_dt=meas_dt,
-                    **controller.last_timings,
+                    ft_age=ft_age, **controller.last_timings,
                 )
             meas_periods.append(meas_dt)
             # Absolute-time pacing: advance the schedule by one nominal period and sleep
