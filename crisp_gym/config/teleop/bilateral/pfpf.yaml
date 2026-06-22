@@ -15,12 +15,12 @@ force: true
 force_fwd: true
 pos_spring: true
 tdpa: false
-control_frequency: 100.0
+control_frequency: 500.0
 delay_steps: 0
-feedback_gain: 0.6        # fix2: lowered 1.0 -> 0.6 (cut reflected-force loop gain)
+feedback_gain: 1.0        # full reflected force (fix2 0.6 reverted per request 2026-06-22)
 feedback_sign: 1.0
 feedback_max_force: 30.0
-force_fwd_gain: 0.1        # fix3: lowered 0.3 -> 0.1 (cut forward-force positive feedback)
+force_fwd_gain: 1.0        # full forward force (fix3 0.1 reverted per request; see WARNING above)
 contact_threshold_n: 1.0
 reflect_deadband_n: 2.0
 reflect_highpass_hz: 0.0
