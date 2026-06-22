@@ -1,8 +1,9 @@
 # Episode setup: randomize around a FIXED point = the slave follower TCP pose,
-# snapshotted from /right/current_pose on inference_pc (2026-06-21, peg-insert v3),
-# X/Y from the snapshot, Z reverted to the prior 0.20625054 origin height. Uniform
-# xyz jitter + yaw about tool z; retract between episodes. To re-snapshot, echo
-# /right/current_pose and replace start_center.
+# snapshotted from /right/current_pose on inference_pc (2026-06-22, peg-insert v3),
+# X/Y + orientation from the snapshot, Z held at the 0.20625054 origin height. Uniform
+# xyz jitter + yaw about tool z; retract between episodes. REQUIRES --setup-config
+# randomized_around_current (without it the recorder homes to CLOSE_TO_TABLE instead).
+# To re-snapshot, echo /right/current_pose and replace start_center.
 enabled: true
 home_before_first: false   # explicit center; don't re-home the follower
 move_speed: 0.05           # m/s, gentle blocking moves
@@ -13,8 +14,8 @@ wait_for_input: false       # the recording manager's start key gates the episod
 seed: 0                     # reproducible jitter (seed + episode_index)
 
 start_center:
-  position: [0.45518998, -0.02420440, 0.20625054]
-  quaternion_xyzw: [0.97345599, -0.22821375, 0.01712170, 0.00296255]
+  position: [0.46126561, -0.02895621, 0.20625054]
+  quaternion_xyzw: [0.97177462, -0.23537537, -0.01532405, 0.00420747]
 
 start_jitter:
   x: 0.05                  # +- m
