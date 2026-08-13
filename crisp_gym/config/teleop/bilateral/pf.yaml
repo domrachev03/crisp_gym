@@ -20,6 +20,7 @@ reflect_deadband_n: 2.0
 reflect_deadband_nm: 0.0
 reflect_highpass_hz: 0.0
 max_translation_m: 0.10
+leader_max_translation_m: 0.0
 max_rotation_rad: 0.35
 max_command_step_m: 0.003
 max_command_step_rad: 0.03

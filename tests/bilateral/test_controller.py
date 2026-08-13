@@ -8,10 +8,11 @@ can be refactored without silently changing what a scheme does. Cartesian framin
 """
 
 import numpy as np
+import pytest
 
-from crisp_gym.sim import MSDRobot
 from crisp_gym.bilateral.bilateral_config import BilateralConfig
 from crisp_gym.bilateral.controller import BilateralController, TeleopTelemetry
+from crisp_gym.sim import MSDRobot
 
 
 # --- harness ----------------------------------------------------------------- #
@@ -178,6 +179,27 @@ def test_invalid_control_timestep_is_rejected():
             pass
         else:
             raise AssertionError(f"invalid timestep {invalid} was accepted")
+
+
+def test_leader_translation_workspace_can_be_disabled_independently():
+    """A zero leader override must not remove the follower workspace guard."""
+    leader, follower = _pair(dof=6, wall=False)
+    cfg = BilateralConfig(
+        delay_steps=1,
+        max_translation_m=0.1,
+        leader_max_translation_m=0.0,
+    )
+    ctrl = BilateralController(leader, follower, cfg, dt=1e-3)
+    leader._pos = np.array([0.2, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    # The first delayed target remains at the in-bounds home. Only the leader is
+    # outside 10 cm, and its explicit zero override disables that check.
+    ctrl.step(dt=1e-3)
+
+    # The follower's independent 10 cm guard remains active once that target
+    # reaches the forward channel.
+    with pytest.raises(RuntimeError, match="follower translation workspace"):
+        ctrl.step(dt=1e-3)
 
 
 def test_force_fwd_gain_scales_forward_force():

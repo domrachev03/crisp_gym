@@ -49,9 +49,12 @@ class BilateralConfig:
     reflect_deadband_n: float = 0.0
     reflect_deadband_nm: float = 0.0
 
-    # Cartesian workspace/step limits. Zero disables a limit for simulation and
-    # legacy configs; the production FR3 PF profile sets all four explicitly.
+    # Cartesian workspace/step limits. Zero disables a limit. The optional
+    # leader override preserves legacy configs by inheriting max_translation_m
+    # when unset, while allowing the backdrivable leader to remain unrestricted
+    # without removing the follower workspace guard.
     max_translation_m: float = 0.0
+    leader_max_translation_m: float | None = None
     max_rotation_rad: float = 0.0
     max_command_step_m: float = 0.0
     max_command_step_rad: float = 0.0

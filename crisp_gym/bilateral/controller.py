@@ -195,8 +195,13 @@ class BilateralController:
             self._follower_target = self._follower_target + self.ch_fwd_pos.receive()
             commanded = self._follower_target
         if self.dof == 6:
+            leader_translation_limit = (
+                cfg.max_translation_m
+                if cfg.leader_max_translation_m is None
+                else cfg.leader_max_translation_m
+            )
             for name, value, limit in (
-                ("leader translation workspace", leader_pos[:3], cfg.max_translation_m),
+                ("leader translation workspace", leader_pos[:3], leader_translation_limit),
                 ("leader rotation workspace", leader_pos[3:], cfg.max_rotation_rad),
                 ("follower translation workspace", commanded[:3], cfg.max_translation_m),
                 ("follower rotation workspace", commanded[3:], cfg.max_rotation_rad),

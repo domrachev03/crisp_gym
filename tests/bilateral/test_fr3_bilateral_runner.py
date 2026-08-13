@@ -2,6 +2,7 @@
 
 from argparse import Namespace
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +10,7 @@ from crisp_gym.bilateral.bilateral_config import BilateralConfig
 from crisp_gym.scripts.fr3_bilateral_teleop import (
     _apply_candidate_frame_limits,
     _validate_arm_mode,
+    _warn_stale_streams,
 )
 
 
@@ -74,6 +76,25 @@ def test_candidate_frame_check_has_tight_nonzero_limits() -> None:
     )
     _apply_candidate_frame_limits(config)
     assert config.max_translation_m == pytest.approx(0.010)
+    assert config.leader_max_translation_m == pytest.approx(0.010)
     assert config.max_rotation_rad == pytest.approx(0.010)
     assert config.max_command_step_m == pytest.approx(0.00025)
     assert config.max_command_step_rad == pytest.approx(0.001)
+
+
+def test_stale_streams_warn_without_terminating_and_are_rate_limited() -> None:
+    """Staleness should warn at 1 Hz and never raise from the runner helper."""
+    stale = {"leader/pose": 0.2}
+    with patch("crisp_gym.scripts.fr3_bilateral_teleop.logger.warning") as warning:
+        last = _warn_stale_streams(stale, now=10.0, last_warning=float("-inf"))
+        assert last == pytest.approx(10.0)
+        warning.assert_called_once()
+
+        warning.reset_mock()
+        last = _warn_stale_streams(stale, now=10.5, last_warning=last)
+        assert last == pytest.approx(10.0)
+        warning.assert_not_called()
+
+        last = _warn_stale_streams(stale, now=11.0, last_warning=last)
+        assert last == pytest.approx(11.0)
+        warning.assert_called_once()

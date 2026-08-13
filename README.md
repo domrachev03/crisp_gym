@@ -25,8 +25,8 @@ Install the pinned Jazzy client environment:
 pixi install -e jazzy
 ```
 
-The FR3 entry point is fail-closed. Without `--arm` it checks stream freshness,
-frame IDs, and sole command ownership, then exits without publishing a command:
+Without `--arm`, the FR3 entry point checks initial stream freshness, frame IDs,
+and sole command ownership, then exits without publishing a command:
 
 ```bash
 pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
@@ -62,9 +62,11 @@ pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
 ```
 
 The initial PF profile is bounded to 2 N reflected force, disables reflected
-torque, limits workspace and command increments, validates all state with a
-monotonic freshness lease, and commands zero wrench/current-pose hold during
-shutdown. The RT controllers independently expire stale commands after 0.1 s.
+torque, leaves leader translation unrestricted, retains the follower workspace,
+rotation and command-increment limits, and commands zero wrench/current-pose hold
+during shutdown. Stream ages beyond the configured threshold produce a
+rate-limited warning without terminating teleoperation. The RT controllers
+independently expire stale commands after 0.1 s if command publication stops.
 
 Do not use `crisp_gym/scripts/bilateral_teleop.py` for this rig. It is the
 Panda-era path, homes both robots, and uses inference-side controller services;

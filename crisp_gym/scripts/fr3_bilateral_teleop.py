@@ -87,7 +87,10 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--feedback-gain", type=float, default=None)
     parser.add_argument("--feedback-ramp-s", type=float, default=3.0)
-    parser.add_argument("--state-timeout-s", type=float, default=0.10)
+    parser.add_argument(
+        "--state-timeout-s", type=float, default=0.10,
+        help="Stream-age warning threshold; stale data is reported but does not terminate.",
+    )
     parser.add_argument("--bias-seconds", type=float, default=1.0)
     parser.add_argument("--bias-max-force", type=float, default=5.0)
     parser.add_argument("--bias-max-torque", type=float, default=0.5)
@@ -124,6 +127,7 @@ def _validate_arm_mode(args: argparse.Namespace) -> None:
 
 def _apply_candidate_frame_limits(config: BilateralConfig) -> None:
     config.max_translation_m = _FRAME_CHECK_MAX_TRANSLATION_M
+    config.leader_max_translation_m = _FRAME_CHECK_MAX_TRANSLATION_M
     config.max_rotation_rad = _FRAME_CHECK_MAX_ROTATION_RAD
     config.max_command_step_m = _FRAME_CHECK_MAX_COMMAND_STEP_M
     config.max_command_step_rad = _FRAME_CHECK_MAX_COMMAND_STEP_RAD
@@ -139,8 +143,16 @@ def _safe_hold(endpoints: tuple[StandardMessageEndpoint, ...], repeats: int = 20
         time.sleep(0.01)
 
 
+def _warn_stale_streams(stale: dict[str, float], now: float, last_warning: float) -> float:
+    """Report stale streams at most once per second without stopping the control loop."""
+    if stale and now - last_warning >= 1.0:
+        logger.warning("stale endpoint data (continuing teleoperation): %s", stale)
+        return now
+    return last_warning
+
+
 def main() -> None:
-    """Run fail-closed mixed-version FR3 preflight or bounded teleoperation."""
+    """Run mixed-version FR3 preflight or bounded teleoperation."""
     args = _parse_args()
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
@@ -285,6 +297,7 @@ def main() -> None:
         start = time.monotonic()
         previous = start
         next_tick = start
+        last_stale_warning = float("-inf")
         period = 1.0 / config.control_frequency
         state_streams = ("pose", "twist", "wrench") if config.force else ("pose", "twist")
         if args.candidate_frame_check:
@@ -306,8 +319,7 @@ def main() -> None:
                 for endpoint in endpoints for stream in state_streams
             }
             stale = {name: age for name, age in ages.items() if age > args.state_timeout_s}
-            if stale:
-                raise RuntimeError(f"stale endpoint data: {stale}")
+            last_stale_warning = _warn_stale_streams(stale, now, last_stale_warning)
             elapsed = now - start
             if args.candidate_frame_check and elapsed >= args.frame_check_duration_s:
                 logger.info(
