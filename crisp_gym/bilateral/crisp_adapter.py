@@ -5,8 +5,8 @@ The control law is axis-generic and frame-agnostic: it reads a robot's
 *feed-forward force*. These adapters supply the cartesian / joint meaning behind
 those generic calls so the same controller runs on hardware unchanged.
 
-Frame convention (cartesian): everything the controller sees is in the **world
-frame**, expressed **relative to the captured home**.
+Frame convention (cartesian): everything the controller sees is in one shared
+teleoperation frame, expressed **relative to the captured home**.
 
   - ``position``  -> world-frame pose increment from home, ``(6,)`` ``[tx,ty,tz,rx,ry,rz]``.
   - ``set_target_position(delta)`` -> ``set_target(integrate_pose(home, delta))``,
@@ -54,17 +54,34 @@ def vec_to_pose(vec: NDArray):
 
 
 class CrispCartesianAdapter:
-    """World-frame, home-relative ``RobotInterface`` over a crisp_py robot (cartesian)."""
+    """Common-frame, home-relative ``RobotInterface`` over a crisp_py robot."""
 
-    def __init__(self, robot, home_pose_vec: NDArray, wrench_fn: Callable[[], NDArray] | None = None):
+    def __init__(
+        self,
+        robot,
+        home_pose_vec: NDArray,
+        wrench_fn: Callable[[], NDArray] | None = None,
+        base_to_common: Rotation | NDArray | None = None,
+    ):
         """Wrap ``robot``; ``home_pose_vec`` is the captured EE home ``(7,)``.
 
         ``wrench_fn`` returns the live TCP wrench ``(6,)`` (e.g. a NetFT reading);
-        ``None`` means this robot reports no force (zeros).
+        ``None`` means this robot reports no force (zeros). ``base_to_common``
+        maps vectors in the robot base frame into the shared teleoperation frame.
+        Identity preserves the original aligned-base behavior.
         """
         self.robot = robot
         self.home = np.asarray(home_pose_vec, dtype=float).copy()
         self._wrench_fn = wrench_fn
+        if base_to_common is None:
+            self.base_to_common = Rotation.identity()
+        elif isinstance(base_to_common, Rotation):
+            self.base_to_common = base_to_common
+        else:
+            matrix = np.asarray(base_to_common, dtype=float)
+            if matrix.shape != (3, 3) or not np.all(np.isfinite(matrix)):
+                raise ValueError("base_to_common must be a finite 3x3 rotation matrix")
+            self.base_to_common = Rotation.from_matrix(matrix)
         self.last_target_vec = self.home.copy()
 
     @property
@@ -73,20 +90,21 @@ class CrispCartesianAdapter:
 
     @property
     def position(self) -> NDArray:
-        return increment_world(self.home, self._now_vec)
+        return rotate_wrench(self.base_to_common, increment_world(self.home, self._now_vec))
 
     @property
     def velocity(self) -> NDArray:
         tw = self.robot.end_effector_twist
-        return np.concatenate([np.asarray(tw.linear, dtype=float),
-                               np.asarray(tw.angular, dtype=float)])
+        twist_tcp = np.concatenate([np.asarray(tw.linear, dtype=float),
+                                    np.asarray(tw.angular, dtype=float)])
+        return rotate_wrench(self.base_to_common * _rot_of_vec(self._now_vec), twist_tcp)
 
     @property
     def wrench(self) -> NDArray:
         if self._wrench_fn is None:
             return np.zeros(6)
         w_tcp = np.asarray(self._wrench_fn(), dtype=float)
-        return rotate_wrench(_rot_of_vec(self._now_vec), w_tcp)  # TCP -> world
+        return rotate_wrench(self.base_to_common * _rot_of_vec(self._now_vec), w_tcp)
 
     def reanchor(self) -> None:
         """Re-home to the robot's current EE pose (after an episode-setup move)."""
@@ -94,11 +112,13 @@ class CrispCartesianAdapter:
         self.last_target_vec = self.home.copy()
 
     def set_target_position(self, delta: NDArray) -> None:
-        self.last_target_vec = integrate_pose(self.home, np.asarray(delta, dtype=float))
+        delta_base = rotate_wrench(self.base_to_common.inv(), np.asarray(delta, dtype=float))
+        self.last_target_vec = integrate_pose(self.home, delta_base)
         self.robot.set_target(pose=self._vec_to_pose(self.last_target_vec))
 
-    def set_feedforward_force(self, world_wrench: NDArray) -> None:
-        w_tcp = rotate_wrench(_rot_of_vec(self._now_vec).inv(), np.asarray(world_wrench, dtype=float))
+    def set_feedforward_force(self, common_wrench: NDArray) -> None:
+        tcp_to_common = self.base_to_common * _rot_of_vec(self._now_vec)
+        w_tcp = rotate_wrench(tcp_to_common.inv(), np.asarray(common_wrench, dtype=float))
         self.robot.set_target_wrench(force=w_tcp[:3].tolist(), torque=w_tcp[3:].tolist())
 
     def _vec_to_pose(self, vec: NDArray):

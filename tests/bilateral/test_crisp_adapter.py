@@ -118,6 +118,34 @@ def test_cartesian_wrench_zero_without_source():
     assert np.allclose(adapter.wrench, np.zeros(6))
 
 
+def test_tilted_base_pose_target_roundtrip():
+    home = _vec(0.3, 0.0, 0.5)
+    rotation = Rotation.from_euler("xyz", [0.6, -0.2, 0.1])
+    adapter = _IdentityCartAdapter(_FakeCartRobot(home), home, base_to_common=rotation)
+    common_delta = np.array([0.03, -0.02, 0.01, 0.1, -0.04, 0.02])
+
+    adapter.set_target_position(common_delta)
+    adapter.robot._vec = adapter.last_target_vec
+
+    assert np.allclose(adapter.position, common_delta, atol=1e-9)
+
+
+def test_tilted_base_wrench_twist_power_is_preserved():
+    pose = _vec(0.3, 0.0, 0.5, (0.2, -0.1, 0.4))
+    rotation = Rotation.from_euler("xyz", [0.6, -0.2, 0.1])
+    wrench_tcp = np.array([2.0, -1.0, 3.0, 0.1, 0.2, -0.3])
+    twist_tcp = np.array([0.2, -0.4, 0.1, 0.3, 0.1, -0.2])
+    robot = _FakeCartRobot(pose)
+    robot.twist = _FakeTwist(twist_tcp[:3], twist_tcp[3:])
+    adapter = CrispCartesianAdapter(
+        robot, pose, wrench_fn=lambda: wrench_tcp, base_to_common=rotation
+    )
+
+    assert np.isclose(adapter.wrench @ adapter.velocity, wrench_tcp @ twist_tcp, atol=1e-9)
+    adapter.set_feedforward_force(adapter.wrench)
+    assert np.allclose(robot.wrench_arg, wrench_tcp, atol=1e-9)
+
+
 # --- joint passthrough reproduces offset_joint ------------------------------- #
 def test_joint_position_mapping_equals_offset_joint():
     leader_home = np.array([0.0, -0.3, 0.1, -2.0, 0.0, 1.6, -0.2])

@@ -64,6 +64,9 @@ class BilateralConfig:
     leader_namespace: str = "left"
     follower_namespace: str = "right"
     follower_env_config: str = "panda_no_cam"
+    follower_controller_config: str | None = "control/teleop_cartesian_impedance.yaml"
+    leader_base_to_common_quat: list[float] | None = None
+    follower_base_to_common_quat: list[float] | None = None
 
     @classmethod
     def from_yaml(cls, yaml_path: Path | str, **overrides) -> "BilateralConfig":

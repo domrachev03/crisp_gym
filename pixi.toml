@@ -29,10 +29,7 @@ libgl-devel = "*"
 
 [environments]
 dev = { features = ["dev"] }
-# humble envs unused on this rig (robots run jazzy); disabled so the solve does
-# not pull the robostack-humble stack. Re-enable if a Humble target is needed.
-# humble = { features = ["humble"] }
-# humble-lerobot = { features = ["humble", "lerobot", "dev"] }
+humble = { features = ["humble"] }
 lerobot = { features = ["lerobot"] }
 jazzy = { features = ["jazzy"] }
 jazzy-lerobot = { features = ["jazzy", "lerobot", "dev"] }
@@ -57,14 +54,24 @@ numpy = ">=1.26,<2.3"
 # lerobot = { git = "https://github.com/huggingface/lerobot", rev = "74690e3f56a90b6ea314afbfb3b801a3d842a005", extras = ["smolvla"]}
 # === clare fork (dead end: older lerobot, missing feature_utils) ===
 # lerobot = { path = "../clare_rebuttal/lerobot_lsy/", editable = true }
-# === Upstream HF lerobot 0.5.1 (numpy-patched), sibling clone ===
-lerobot = { path = "../../huggingface/lerobot", editable = true }
+# Pinned upstream revision; avoids depending on a workstation-specific sibling checkout.
+lerobot = { git = "https://github.com/huggingface/lerobot", rev = "dacd1d7f5c719c3e56d7b7154a751bef6d5bd23c", extras = ["smolvla"] }
 pyrealsense2 = ">=2.54.1"
 fastapi = ">=0.110"
 uvicorn = ">=0.29"
 
-# Humble feature removed — this rig is jazzy-only. Restore from upstream if a
-# ROS2 Humble target is ever needed.
+[feature.humble]
+channels = ["https://prefix.dev/robostack-humble", "https://prefix.dev/conda-forge"]
+
+[feature.humble.dependencies]
+python = ">=3.12,<3.13"
+numpy = ">=2.0,<=2.3.0"
+ros-humble-desktop = "*"
+ros-humble-ros2-control = "*"
+ros-humble-ros2-controllers = "*"
+ros-humble-rmw-cyclonedds-cpp = "*"
+colcon-common-extensions = "*"
+rosdep = "*"
 
 [feature.jazzy]
 channels = ["https://prefix.dev/robostack-jazzy"]
@@ -81,7 +88,7 @@ ros-jazzy-rmw-zenoh-cpp = "*"
 
 [pypi-dependencies]
 crisp_gym = { path = ".", editable = true }
-crisp_python = { path = "../crisp_py", editable = true }
+crisp_python = ">=3.0.0,<4"
 
 [tasks]
 configure = "bash scripts/configure.sh"

@@ -1,0 +1,11 @@
+task.k_pos_x: 0.0
+task.k_pos_y: 0.0
+task.k_pos_z: 0.0
+task.k_rot_x: 0.0
+task.k_rot_y: 0.0
+task.k_rot_z: 0.0
+nullspace.stiffness: 0.0
+use_friction: true
+use_gravity_compensation: false
+use_coriolis_compensation: true
+use_local_jacobian: true

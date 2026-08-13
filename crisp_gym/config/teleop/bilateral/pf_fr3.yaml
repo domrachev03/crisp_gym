@@ -1,0 +1,25 @@
+scheme: pf
+mode: cartesian
+coupling: absolute
+force: true
+force_fwd: false
+pos_spring: false
+tdpa: false
+control_frequency: 100.0
+delay_steps: 0
+feedback_gain: 0.6
+feedback_sign: 1.0
+feedback_max_force: 30.0
+contact_threshold_n: 1.0
+reflect_deadband_n: 2.0
+reflect_highpass_hz: 0.0
+leader_config: fr3_leader_nogripper
+leader_namespace: leader
+follower_namespace: follower
+follower_env_config: fr3_follower_no_cam
+leader_wrench_topic: /leader/netft_data_unbiased_tcp
+follower_wrench_topic: /follower/netft_data_unbiased_tcp
+follower_controller_config: null
+# Historical IRIS WorldToBase RPY [0.831, 0.212, 0.155], expressed as XYZW.
+leader_base_to_common_quat: [0.4241300075, 0.1557915314, 0.0251414406, 0.8916887334]
+follower_base_to_common_quat: [0.0, 0.0, 0.0, 1.0]
