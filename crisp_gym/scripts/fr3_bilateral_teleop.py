@@ -25,6 +25,11 @@ from crisp_gym.bilateral.telemetry import TeleopLogger
 
 logger = logging.getLogger(__name__)
 
+_FRAME_CHECK_MAX_TRANSLATION_M = 0.010
+_FRAME_CHECK_MAX_ROTATION_RAD = 0.010
+_FRAME_CHECK_MAX_COMMAND_STEP_M = 0.00025
+_FRAME_CHECK_MAX_COMMAND_STEP_RAD = 0.001
+
 
 def _rotation(values: list[float] | None, name: str) -> Rotation:
     if values is None:
@@ -69,6 +74,17 @@ def _parse_args() -> argparse.Namespace:
         help="Confirm that both base mappings passed the documented physical +axis test.",
     )
     parser.add_argument("--arm", action="store_true", help="Enable commands after preflight.")
+    parser.add_argument(
+        "--candidate-frame-check", action="store_true",
+        help=(
+            "Permit only a tightly bounded, timed position check of an unverified base "
+            "transform. This does not approve the transform for normal teleoperation."
+        ),
+    )
+    parser.add_argument(
+        "--frame-check-duration-s", type=float, default=30.0,
+        help="Automatic stop time for --candidate-frame-check (default: 30 seconds).",
+    )
     parser.add_argument("--feedback-gain", type=float, default=None)
     parser.add_argument("--feedback-ramp-s", type=float, default=3.0)
     parser.add_argument("--state-timeout-s", type=float, default=0.10)
@@ -85,6 +101,34 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _validate_arm_mode(args: argparse.Namespace) -> None:
+    if args.candidate_frame_check:
+        if not args.arm:
+            raise SystemExit("Refusing frame check: --candidate-frame-check requires --arm")
+        if args.scheme != "position":
+            raise SystemExit("Refusing frame check: only --scheme position is permitted")
+        if args.leader_base_to_common_quat is None:
+            raise SystemExit(
+                "Refusing frame check: provide the candidate --leader-base-to-common-quat"
+            )
+        if not np.isfinite(args.frame_check_duration_s) or args.frame_check_duration_s <= 0.0:
+            raise SystemExit("Refusing frame check: --frame-check-duration-s must be positive")
+        return
+    if args.arm and (not args.transforms_verified or args.leader_base_to_common_quat is None):
+        raise SystemExit(
+            "Refusing to arm: provide --leader-base-to-common-quat and "
+            "--transforms-verified after the physical axis test, or use the bounded "
+            "--candidate-frame-check mode"
+        )
+
+
+def _apply_candidate_frame_limits(config: BilateralConfig) -> None:
+    config.max_translation_m = _FRAME_CHECK_MAX_TRANSLATION_M
+    config.max_rotation_rad = _FRAME_CHECK_MAX_ROTATION_RAD
+    config.max_command_step_m = _FRAME_CHECK_MAX_COMMAND_STEP_M
+    config.max_command_step_rad = _FRAME_CHECK_MAX_COMMAND_STEP_RAD
+
+
 def _safe_hold(endpoints: tuple[StandardMessageEndpoint, ...], repeats: int = 20) -> None:
     for _ in range(repeats):
         for endpoint in endpoints:
@@ -96,6 +140,7 @@ def _safe_hold(endpoints: tuple[StandardMessageEndpoint, ...], repeats: int = 20
 
 
 def main() -> None:
+    """Run fail-closed mixed-version FR3 preflight or bounded teleoperation."""
     args = _parse_args()
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper()),
@@ -105,11 +150,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
 
-    if args.arm and (not args.transforms_verified or args.leader_base_to_common_quat is None):
-        raise SystemExit(
-            "Refusing to arm: provide --leader-base-to-common-quat and "
-            "--transforms-verified after the physical axis test"
-        )
+    _validate_arm_mode(args)
     leader_rotation = _rotation(args.leader_base_to_common_quat, "leader base mapping")
     follower_rotation = _rotation(args.follower_base_to_common_quat, "follower base mapping")
     config_path = (
@@ -120,6 +161,16 @@ def main() -> None:
     config = BilateralConfig.from_yaml(config_path, **overrides)
     if config.mode != "cartesian":
         raise RuntimeError("the mixed-distro standard-message runner supports Cartesian mode only")
+    if args.candidate_frame_check:
+        _apply_candidate_frame_limits(config)
+        logger.warning(
+            "CANDIDATE FRAME CHECK: transform is unverified; limiting motion to %.1f mm, "
+            "%.3f rad, and %.2f mm command steps for %.1f seconds",
+            config.max_translation_m * 1000.0,
+            config.max_rotation_rad,
+            config.max_command_step_m * 1000.0,
+            args.frame_check_duration_s,
+        )
 
     import rclpy
     from rclpy.context import Context
@@ -236,10 +287,18 @@ def main() -> None:
         next_tick = start
         period = 1.0 / config.control_frequency
         state_streams = ("pose", "twist", "wrench") if config.force else ("pose", "twist")
-        logger.info(
-            "ARMED: %s at %.1f Hz; reflected gain ramps 0 -> %.3f over %.1f s",
-            config.scheme, config.control_frequency, requested_gain, args.feedback_ramp_s,
-        )
+        if args.candidate_frame_check:
+            logger.warning(
+                "CANDIDATE FRAME CHECK ARMED at %.1f Hz for at most %.1f seconds; "
+                "move one leader axis only a few millimeters and stop on any wrong direction",
+                config.control_frequency,
+                args.frame_check_duration_s,
+            )
+        else:
+            logger.info(
+                "ARMED: %s at %.1f Hz; reflected gain ramps 0 -> %.3f over %.1f s",
+                config.scheme, config.control_frequency, requested_gain, args.feedback_ramp_s,
+            )
         while not stop.is_set():
             now = time.monotonic()
             ages = {
@@ -250,6 +309,12 @@ def main() -> None:
             if stale:
                 raise RuntimeError(f"stale endpoint data: {stale}")
             elapsed = now - start
+            if args.candidate_frame_check and elapsed >= args.frame_check_duration_s:
+                logger.info(
+                    "Candidate frame-check time limit reached; the transform remains "
+                    "unapproved until the physical direction observation is recorded"
+                )
+                break
             ramp = 1.0 if args.feedback_ramp_s <= 0.0 else min(1.0, elapsed / args.feedback_ramp_s)
             config.feedback_gain = requested_gain * ramp
             measured_dt = min(max(now - previous, 0.5 * period), 5.0 * period)

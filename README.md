@@ -35,6 +35,22 @@ pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
   --transforms-verified
 ```
 
+When the tilted leader's yaw is still a candidate, use the dedicated physical
+axis-check mode instead of falsely passing `--transforms-verified`. It accepts
+only the position scheme, limits the mapped workspace to 10 mm and rotation to
+0.01 rad, limits translation command steps to 0.25 mm, and stops automatically:
+
+```bash
+pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
+  --scheme position --arm --candidate-frame-check \
+  --frame-check-duration-s 30 \
+  --leader-base-to-common-quat <candidate-x> <candidate-y> <candidate-z> <candidate-w>
+```
+
+Move one leader axis only a few millimeters and stop immediately on an axis swap
+or sign error. A successful run is evidence to record; it does not automatically
+promote the transform or relax the normal arming interlock.
+
 Arming also requires the leader quaternion and an explicit confirmation that
 both physical base-axis checks passed:
 
