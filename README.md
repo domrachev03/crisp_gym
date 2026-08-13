@@ -62,11 +62,12 @@ pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
 ```
 
 The initial PF profile is bounded to 2 N reflected force, disables reflected
-torque, leaves leader and follower translation unrestricted, retains rotation
-and command-increment limits, and commands zero wrench/current-pose hold during
-shutdown. Stream ages beyond the configured threshold produce a rate-limited
-warning without terminating teleoperation. The RT controllers independently
-expire stale commands after 0.1 s if command publication stops.
+torque, leaves leader and follower translation and rotation workspaces
+unrestricted, retains command-increment limits, and commands zero
+wrench/current-pose hold during shutdown. Stream ages beyond the configured
+threshold produce a rate-limited warning without terminating teleoperation. The
+RT controllers independently expire stale commands after 0.1 s if command
+publication stops.
 
 Do not use `crisp_gym/scripts/bilateral_teleop.py` for this rig. It is the
 Panda-era path, homes both robots, and uses inference-side controller services;
