@@ -6,7 +6,6 @@ __pycache__
 .pixi
 *.egg-info
 build/lib
-pixi.lock
 scripts/set_env.sh
 outputs/
 models/

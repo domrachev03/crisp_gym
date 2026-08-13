@@ -144,6 +144,42 @@ def test_forward_force_is_clamped_to_max():
     assert fwd.max() <= 20.0 + 1e-6
 
 
+def test_cartesian_force_and_torque_are_clamped_independently():
+    leader, follower = _pair(dof=6, wall=False)
+    follower._contact = np.array([30.0, 40.0, 0.0, 3.0, 4.0, 0.0])
+    cfg = BilateralConfig(
+        scheme="pf", force=True, feedback_max_force=10.0, feedback_max_torque=1.0,
+        reflect_deadband_n=0.0, reflect_deadband_nm=0.0,
+    )
+    tel = BilateralController(leader, follower, cfg, dt=1e-3).step(dt=1e-3)
+    assert np.isclose(np.linalg.norm(tel.reflected_wrench[:3]), 10.0)
+    assert np.isclose(np.linalg.norm(tel.reflected_wrench[3:]), 1.0)
+
+
+def test_cartesian_force_and_torque_deadbands_are_independent():
+    leader, follower = _pair(dof=6, wall=False)
+    follower._contact = np.array([3.0, 0.0, 0.0, 0.4, 0.0, 0.0])
+    cfg = BilateralConfig(
+        scheme="pf", force=True, feedback_max_force=10.0, feedback_max_torque=10.0,
+        reflect_deadband_n=2.0, reflect_deadband_nm=0.5,
+    )
+    tel = BilateralController(leader, follower, cfg, dt=1e-3).step(dt=1e-3)
+    assert np.allclose(tel.reflected_wrench[:3], [1.0, 0.0, 0.0])
+    assert np.allclose(tel.reflected_wrench[3:], np.zeros(3))
+
+
+def test_invalid_control_timestep_is_rejected():
+    leader, follower = _pair(wall=False)
+    ctrl = BilateralController(leader, follower, BilateralConfig(), dt=1e-3)
+    for invalid in (0.0, -0.1, np.nan, np.inf):
+        try:
+            ctrl.step(dt=invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"invalid timestep {invalid} was accepted")
+
+
 def test_force_fwd_gain_scales_forward_force():
     leader, follower = _pair(wall=False, leader_env=lambda pos: np.array([4.0]))
     cfg = BilateralConfig(scheme="pfpf", force_fwd=True, force_fwd_gain=0.5,

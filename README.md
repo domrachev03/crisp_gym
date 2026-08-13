@@ -11,3 +11,49 @@
 This repository contains Gymnasium environments to train and deploy high-level learning-based policies from [LeRobot](https://github.com/huggingface/lerobot) using [CRISP_PY](https://github.com/utiasDSL/crisp_py) and the [CRISP controllers](https://github.com/utiasDSL/crisp_controllers).
 
 Check the [docs](https://utiasdsl.github.io/crisp_controllers/getting_started/#4-using-the-gym) to get started.
+
+## Mixed-version dual FR3
+
+The production IRIS rig uses a Jazzy/protocol-10 leader and a
+Humble/protocol-7 follower. Controller lifecycle stays on each RT PC;
+`inference_pc` uses two isolated ROS contexts and exchanges only stamped
+pose/twist/wrench messages.
+
+Install the pinned Jazzy client environment:
+
+```bash
+pixi install -e jazzy
+```
+
+The FR3 entry point is fail-closed. Without `--arm` it checks stream freshness,
+frame IDs, and sole command ownership, then exits without publishing a command:
+
+```bash
+pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
+  --scheme position \
+  --leader-base-to-common-quat <x> <y> <z> <w> \
+  --transforms-verified
+```
+
+Arming also requires the leader quaternion and an explicit confirmation that
+both physical base-axis checks passed:
+
+```bash
+pixi run -e jazzy python crisp_gym/scripts/fr3_bilateral_teleop.py \
+  --scheme pf --arm --feedback-gain 0.1 --feedback-ramp-s 3.0 \
+  --leader-base-to-common-quat <x> <y> <z> <w> \
+  --transforms-verified
+```
+
+The initial PF profile is bounded to 2 N reflected force, disables reflected
+torque, limits workspace and command increments, validates all state with a
+monotonic freshness lease, and commands zero wrench/current-pose hold during
+shutdown. The RT controllers independently expire stale commands after 0.1 s.
+
+Do not use `crisp_gym/scripts/bilateral_teleop.py` for this rig. It is the
+Panda-era path, homes both robots, and uses inference-side controller services;
+it now requires the explicit `--legacy-unsafe` acknowledgement for existing
+Panda users.
+
+The full calibration and commissioning ladder lives in the matching
+`iris-panda-ros2/docs/fr3_dual_calibration_pf_runbook.md` branch.

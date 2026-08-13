@@ -7,7 +7,8 @@ scheme on hardware before recording. The control math (coupling, reflection, TDP
 is unit-tested in ``tests/bilateral/``; this entry is the HW path (keep e-stop ready).
 
 Examples:
-    pixi run -e jazzy python crisp_gym/scripts/bilateral_teleop.py --teleop-scheme pf
+    pixi run -e jazzy python crisp_gym/scripts/bilateral_teleop.py \
+        --legacy-unsafe --teleop-scheme pf
     pixi run -e jazzy python crisp_gym/scripts/bilateral_teleop.py \
         --teleop-scheme pf_tdpa --delay-steps 30 --log /tmp/run.jsonl
 """
@@ -98,6 +99,14 @@ def _log_rate_stats(periods: list[float], overruns: int, target_hz: float) -> No
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument(
+        "--legacy-unsafe",
+        action="store_true",
+        help=(
+            "Acknowledge that this Panda-era runner homes both robots and uses "
+            "inference-side controller-manager clients. Never use it for the mixed-version FR3 rig."
+        ),
+    )
     p.add_argument("--teleop-scheme", type=str, default="pf",
                    help="position | pf | pf_tdpa | pfpf | pfpf_tdpa | joint_pf")
     p.add_argument("--delay-steps", type=int, default=None,
@@ -149,6 +158,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if not args.legacy_unsafe:
+        raise SystemExit(
+            "Refusing to run the Panda-era bilateral entry point. For the dual FR3 rig use "
+            "crisp_gym/scripts/fr3_bilateral_teleop.py. Existing Panda users must pass "
+            "--legacy-unsafe explicitly."
+        )
     setup_logging(level=args.log_level)
     # The crisp_py per-robot executor threads fire ~10k callbacks/s (NetFT ~2.1kHz x2,
     # joints 1kHz x2, pose/twist 250Hz). With the default 5ms GIL switch interval the

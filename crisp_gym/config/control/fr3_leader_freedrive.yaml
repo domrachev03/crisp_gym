@@ -1,0 +1,15 @@
+# FR3 leader: firmware/Desk handles arbitrary-mount gravity. No generic Panda friction.
+limit_error: true
+limit_torques: true
+max_delta_tau: 0.5
+nullspace.stiffness: 0.0
+task.k_pos_x: 0.0
+task.k_pos_y: 0.0
+task.k_pos_z: 0.0
+task.k_rot_x: 30.0
+task.k_rot_y: 30.0
+task.k_rot_z: 30.0
+use_coriolis_compensation: true
+use_friction: false
+use_gravity_compensation: false
+use_local_jacobian: true

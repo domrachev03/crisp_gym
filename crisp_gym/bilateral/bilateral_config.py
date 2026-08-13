@@ -43,9 +43,18 @@ class BilateralConfig:
     feedback_gain: float = 1.0
     feedback_sign: float = 1.0
     feedback_max_force: float = 30.0  # ~p99.9 of observed peg-insertion contact (pf-insert-10ep)
+    feedback_max_torque: float = 0.0  # disabled until TCP origin/clocking is physically verified
     contact_threshold_n: float = 1.0
     reflect_highpass_hz: float = 0.0
     reflect_deadband_n: float = 0.0
+    reflect_deadband_nm: float = 0.0
+
+    # Cartesian workspace/step limits. Zero disables a limit for simulation and
+    # legacy configs; the production FR3 PF profile sets all four explicitly.
+    max_translation_m: float = 0.0
+    max_rotation_rad: float = 0.0
+    max_command_step_m: float = 0.0
+    max_command_step_rad: float = 0.0
 
     # 4-channel forward-force gain (leader wrench -> follower ff); None = use feedback_gain
     force_fwd_gain: float | None = None
@@ -58,24 +67,27 @@ class BilateralConfig:
     rot_spring_k: float = 0.0
 
     # wiring
-    follower_wrench_topic: str = "/right/netft_data_unbiased_tcp"
-    leader_wrench_topic: str = "/left/netft_data_unbiased_tcp"
-    leader_config: str = "left_leader_nogripper"
-    leader_namespace: str = "left"
-    follower_namespace: str = "right"
-    follower_env_config: str = "panda_no_cam"
+    follower_wrench_topic: str = "/follower/netft_data_unbiased_tcp"
+    leader_wrench_topic: str = "/leader/netft_data_unbiased_tcp"
+    leader_config: str = "fr3_leader_nogripper"
+    leader_namespace: str = "leader"
+    follower_namespace: str = "follower"
+    follower_env_config: str = "fr3_follower_no_cam"
 
     @classmethod
     def from_yaml(cls, yaml_path: Path | str, **overrides) -> "BilateralConfig":
         """Build a config from a YAML file, then apply keyword overrides.
 
-        Unknown keys in the YAML are ignored (with no silent typo-swallowing of
-        the *flag* fields, which the scheme tests pin explicitly).
+        Unknown keys are rejected: a typo in a safety limit must never silently
+        fall back to a permissive default.
         """
         with open(yaml_path, "r") as f:
             data = yaml.safe_load(f) or {}
         data.update(overrides)
         known = {f.name for f in fields(cls)}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise ValueError(f"Unknown bilateral configuration keys: {unknown}")
         kwargs = {k: v for k, v in data.items() if k in known}
         return cls(**kwargs)
 

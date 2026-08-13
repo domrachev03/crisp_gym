@@ -108,6 +108,7 @@ class BilateralController:
 
         self._prev_leader = self.leader_home.copy()         # relative increment anchor
         self._follower_target = self.follower_home.copy()   # relative integrated target
+        self._last_commanded = self.follower_home.copy()
         self._step = 0
         self.perf = False              # set True to populate last_timings each step
         self.last_timings: dict = {}   # read/compute/publish ms breakdown when perf
@@ -125,6 +126,7 @@ class BilateralController:
         self.follower_home = np.asarray(self.follower.position, dtype=float).copy()
         self._prev_leader = self.leader_home.copy()
         self._follower_target = self.follower_home.copy()
+        self._last_commanded = self.follower_home.copy()
         d = self.config.delay_steps
         fwd_fill = self.leader_home if self.config.coupling == "absolute" else None
         self.ch_fwd_pos = DelayedChannel(d, self.dof, fill=fwd_fill)
@@ -136,12 +138,21 @@ class BilateralController:
             self.ch_back_pos = DelayedChannel(d, self.dof, fill=self.follower_home)
 
     def _clamp_force(self, f: NDArray) -> NDArray:
-        """Clamp the translational (first <=3 axes) force magnitude to the max."""
+        """Clamp force and torque independently; reject non-finite commands."""
         f = np.asarray(f, dtype=float).copy()
+        if f.shape != (self.dof,) or not np.all(np.isfinite(f)):
+            raise ValueError(f"invalid feed-forward vector: shape={f.shape}, value={f}")
         k = min(3, self.dof)
         mag = float(np.linalg.norm(f[:k]))
         if mag > self.config.feedback_max_force > 0.0:
             f[:k] *= self.config.feedback_max_force / mag
+        if self.dof == 6:
+            torque_mag = float(np.linalg.norm(f[3:]))
+            max_torque = self.config.feedback_max_torque
+            if max_torque <= 0.0:
+                f[3:] = 0.0
+            elif torque_mag > max_torque:
+                f[3:] *= max_torque / torque_mag
         return f
 
     def step(self, dt: float | None = None, human_force: NDArray | None = None) -> TeleopTelemetry:
@@ -156,6 +167,8 @@ class BilateralController:
         """
         cfg = self.config
         dt = self.dt if dt is None else float(dt)
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError(f"control timestep must be finite and positive, got {dt}")
         perf = self.perf
         t0 = time.perf_counter() if perf else 0.0
         pub = 0.0  # accumulated time spent in the (DDS-publishing) command calls
@@ -164,6 +177,12 @@ class BilateralController:
         follower_pos = np.asarray(self.follower.position, dtype=float)
         leader_w = np.asarray(self.leader.wrench, dtype=float)
         follower_w = np.asarray(self.follower.wrench, dtype=float)
+        for name, value in (
+            ("leader position", leader_pos), ("follower position", follower_pos),
+            ("leader wrench", leader_w), ("follower wrench", follower_w),
+        ):
+            if value.shape != (self.dof,) or not np.all(np.isfinite(value)):
+                raise ValueError(f"invalid {name}: shape={value.shape}, value={value}")
         t_read = time.perf_counter() if perf else 0.0
 
         # --- forward position: leader -> follower target ------------------------
@@ -175,6 +194,21 @@ class BilateralController:
             self._prev_leader = leader_pos
             self._follower_target = self._follower_target + self.ch_fwd_pos.receive()
             commanded = self._follower_target
+        if self.dof == 6:
+            for name, value, limit in (
+                ("leader translation workspace", leader_pos[:3], cfg.max_translation_m),
+                ("leader rotation workspace", leader_pos[3:], cfg.max_rotation_rad),
+                ("follower translation workspace", commanded[:3], cfg.max_translation_m),
+                ("follower rotation workspace", commanded[3:], cfg.max_rotation_rad),
+                ("translation command step", commanded[:3] - self._last_commanded[:3],
+                 cfg.max_command_step_m),
+                ("rotation command step", commanded[3:] - self._last_commanded[3:],
+                 cfg.max_command_step_rad),
+            ):
+                magnitude = float(np.linalg.norm(value))
+                if limit > 0.0 and magnitude > limit:
+                    raise RuntimeError(f"{name} {magnitude:.6f} exceeds limit {limit:.6f}")
+        self._last_commanded = np.asarray(commanded, dtype=float).copy()
         if perf:
             _p = time.perf_counter()
             self.follower.set_target_position(commanded)
@@ -207,7 +241,11 @@ class BilateralController:
         if self.ch_back_force is not None:
             fe = cfg.feedback_sign * cfg.feedback_gain * (follower_w - self.wrench_bias)
             fe = self.reflect_hp.step(fe)
-            fe = soft_deadband(fe, cfg.reflect_deadband_n)
+            if self.dof == 6:
+                fe[:3] = soft_deadband(fe[:3], cfg.reflect_deadband_n)
+                fe[3:] = soft_deadband(fe[3:], cfg.reflect_deadband_nm)
+            else:
+                fe = soft_deadband(fe, cfg.reflect_deadband_n)
             self.ch_back_force.send(fe)
             reflected = self.ch_back_force.receive()
             Fh = human_force if human_force is not None else leader_w

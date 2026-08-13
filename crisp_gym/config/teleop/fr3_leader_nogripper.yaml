@@ -1,0 +1,17 @@
+# Protocol-10 FR3 leader on rt_pc_leader_device. Controller lifecycle stays local.
+leader:
+  robot_type: "franka"
+  publish_frequency: 100.0
+  time_to_home: 5.0
+  home_config: [0.0, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854]
+
+use_gripper: false
+leader_gripper:
+  min_value: 0.0
+  max_value: 1.0
+  joint_state_topic: /leader/unused_gripper/joint_states
+  command_topic: /leader/unused_gripper/command
+  enable_torque_service: /leader/unused_gripper/set_torque
+
+leader_namespace: leader
+gravity_compensation_controller: control/fr3_leader_freedrive.yaml

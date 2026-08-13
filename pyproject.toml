@@ -23,6 +23,7 @@ crisp-record-structured = "crisp_gym.scripts.record_structured_leader_follower:m
 crisp-visualize-structured = "crisp_gym.scripts.visualize_structured_dataset:main"
 crisp-record-dashboard = "crisp_gym.scripts.record_dashboard:main"
 crisp-check-config = "crisp_gym.scripts.check_config:main"
+crisp-bilateral-fr3 = "crisp_gym.scripts.fr3_bilateral_teleop:main"
 
 [tool.ruff]
 exclude = [
