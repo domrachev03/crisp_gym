@@ -14,7 +14,6 @@ import numpy as np
 import rclpy
 
 import crisp_gym  # noqa: F401
-from crisp_gym.config.home import HomeConfig
 from crisp_gym.envs.manipulator_env import make_env
 from crisp_gym.record.recording_manager import make_recording_manager
 from crisp_gym.bilateral.bilateral_config import make_bilateral_config
@@ -125,7 +124,6 @@ def main():  # noqa: C901
                    help="Output .rrd path (save mode).")
     p.add_argument("--rerun-images-only", action=argparse.BooleanOptionalAction, default=True,
                    help="Log only camera images to rerun (skip F/T + pose); on by default.")
-    p.add_argument("--home-config-noise", type=float, default=0.0)
     p.add_argument("--log-level", type=str, default="INFO",
                    choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     args = p.parse_args()
@@ -186,10 +184,6 @@ def main():  # noqa: C901
                 overrides["feedback_gain"] = args.feedback_gain
             bilateral_config = make_bilateral_config(args.teleop_scheme, **overrides)
             bilateral_dof = 7 if bilateral_config.mode == "joint" else 6
-            if args.home_config_noise > 0.0:
-                logger.warning("home-config-noise > 0 with a bilateral scheme: homes are "
-                               "anchored once, so keep noise 0 for consistent coupling.")
-
         # Episode-setup config (loaded early so we can decide whether to pre-home).
         setup_cfg = None
         if args.setup_config:
@@ -223,7 +217,9 @@ def main():  # noqa: C901
         if keep_current:
             logger.info("Setup origin = current follower TCP (skipping pre-loop home).")
         else:
-            env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
+            # Match standalone bilateral teleoperation: home to the deterministic
+            # joint configuration from the selected follower environment.
+            env.home()
         env.reset()
 
         # Build the bilateral controller once, with both arms at home (anchors the
@@ -260,8 +256,7 @@ def main():  # noqa: C901
             env.robot.reset_targets()
             if setup_runner is None:
                 # setup handles repositioning (retract + randomized start) next episode
-                env.robot.home(blocking=False,
-                               home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=args.home_config_noise))
+                env.robot.home(blocking=False)
             leader.robot.reset_targets()
             leader.robot.home(blocking=False)
             if env.gripper is not None:
