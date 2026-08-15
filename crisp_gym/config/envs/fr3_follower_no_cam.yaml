@@ -7,6 +7,7 @@ robot_config:
   robot_type: franka
   publish_frequency: 100.0
   time_to_home: 5.0
+  home_config: [-0.106634, 0.057673, 0.148840, -2.657533, -0.003345, 2.718331, 1.008686]
 gripper_config:
   min_value: 0.0
   max_value: 1.0

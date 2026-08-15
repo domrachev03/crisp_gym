@@ -27,7 +27,6 @@ import rclpy
 from crisp_gym.bilateral.bilateral_config import make_bilateral_config
 from crisp_gym.bilateral.runtime import build_bilateral_controller
 from crisp_gym.bilateral.telemetry import TeleopLogger
-from crisp_gym.config.home import HomeConfig
 from crisp_gym.config.path import find_config
 from crisp_gym.envs.manipulator_env import make_env
 from crisp_gym.teleop.teleop_robot import make_leader
@@ -191,7 +190,7 @@ def main() -> None:
     env = make_env(config.follower_env_config, control_type=control_type,
                    namespace=config.follower_namespace)
     env.wait_until_ready()
-    env.home(home_config=HomeConfig.CLOSE_TO_TABLE.randomize(noise=0.0))
+    env.home()
     env.reset()
 
     controller = build_bilateral_controller(env, leader, config, dt=dt,
