@@ -23,6 +23,7 @@ crisp-record-structured = "crisp_gym.scripts.record_structured_leader_follower:m
 crisp-visualize-structured = "crisp_gym.scripts.visualize_structured_dataset:main"
 crisp-record-dashboard = "crisp_gym.scripts.record_dashboard:main"
 crisp-record-tui = "crisp_gym.scripts.record_tui:main"
+crisp-replay-structured = "crisp_gym.scripts.replay_structured_dataset:main"
 crisp-check-config = "crisp_gym.scripts.check_config:main"
 
 [tool.ruff]
