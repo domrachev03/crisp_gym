@@ -146,30 +146,9 @@ def _build_wrench_process(config: BilateralConfig, bias_seconds: float,
     return leader_fn, follower_fn, mgr, age_fns
 
 
-def _drop_joint_subscription(robot) -> bool:  # noqa: ANN001
-    """Destroy a crisp_py robot's joint_states subscription (cartesian-mode only).
-
-    The cartesian adapter reads only end_effector_pose/twist/wrench, never
-    joint_values, but crisp_py subscribes joint_states at ~1 kHz and runs its
-    callback on the executor that shares the control process's GIL. Dropping it
-    (after wait_until_ready, so readiness already passed) removes that load.
-    """
-    sub = getattr(robot, "_joint_subscriber", None)
-    if sub is None:
-        return False
-    try:
-        robot.node.destroy_subscription(sub)
-        robot._joint_subscriber = None
-        return True
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"Could not drop joint_states subscription: {e}")
-        return False
-
-
 def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float | None = None,
                                bias_seconds: float = 1.0, wrench_process: bool = False,
-                               wrench_cores: list[int] | None = None,
-                               drop_joint_sub: bool = False) -> BilateralController:
+                               wrench_cores: list[int] | None = None) -> BilateralController:
     """Construct the controller for ``config`` against the live ``env`` + ``leader``.
 
     Args:
@@ -181,8 +160,6 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
         wrench_process: offload the NetFT wrench subs to a separate poller process
             (own GIL) so the ~2.1 kHz x2 callbacks don't starve the control loop.
         wrench_cores: optional CPU cores to pin that poller process to.
-        drop_joint_sub: cartesian only -- destroy the unused joint_states sub (~1kHz
-            x2) to cut its callbacks off the control GIL.
     """
     follower_robot = env.robot
     leader_robot = leader.robot
@@ -250,11 +227,6 @@ def build_bilateral_controller(env, leader, config: BilateralConfig, dt: float |
             base_to_common=_base_rotation(config.follower_base_to_common_quat),
         )
         follower_robot.set_target(pose=vec_to_pose(follower_home))  # hold at home
-
-        if drop_joint_sub:
-            n = sum(_drop_joint_subscription(r) for r in (leader_robot, follower_robot))
-            logger.info(f"Dropped joint_states subscription on {n} robot(s) "
-                        f"(~1kHz each) — cartesian control never reads joint_values.")
 
     if config.tdpa and config.delay_steps == 0:
         logger.warning(

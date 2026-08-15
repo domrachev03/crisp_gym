@@ -135,9 +135,6 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timing", action="store_true", default=False,
                    help="Log per-tick read/compute/publish ms breakdown to the telemetry jsonl "
                         "(diagnose where a slow tick spends its time).")
-    p.add_argument("--keep-joint-sub", action="store_true", default=False,
-                   help="Keep crisp_py's joint_states sub (~1kHz x2). By default it is dropped in "
-                        "cartesian mode (unused there) to cut its callbacks off the control GIL.")
     p.add_argument("--ft-stale-timeout", type=float, default=0.1,
                    help="Warn (throttled ~1/s) if no fresh F/T sample arrives for this many "
                         "seconds — a stale/dead wrench means the reflected force is wrong. Normal "
@@ -195,8 +192,7 @@ def main() -> None:
 
     controller = build_bilateral_controller(env, leader, config, dt=dt,
                                              wrench_process=args.wrench_process,
-                                             wrench_cores=args.wrench_cores,
-                                             drop_joint_sub=not args.keep_joint_sub)
+                                             wrench_cores=args.wrench_cores)
     controller.perf = args.timing  # per-tick read/compute/publish breakdown into telemetry
     log_path = None if args.no_log else (args.log or f"/tmp/bilateral_{config.scheme}.jsonl")
     telem = TeleopLogger() if log_path else None
