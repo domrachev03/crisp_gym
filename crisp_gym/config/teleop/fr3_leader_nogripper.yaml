@@ -2,7 +2,7 @@ leader:
   robot_type: franka
   publish_frequency: 100.0
   time_to_home: 5.0
-  home_config: [0.0, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854]
+  home_config: [2.049553, -0.693968, -1.447995, -1.647495, -0.073369, 2.056294, 0.551513]
 use_gripper: false
 leader_gripper:
   min_value: 0.0
