@@ -38,6 +38,23 @@ def test_pf_reverse_swaps_roles():
     assert cfg.leader_config == "right_leader_nogripper"
 
 
+def test_pfpf_fr3_uses_four_channels_and_fr3_endpoints():
+    """The FR3 profile must enable PF-PF and bind both physical endpoints."""
+    cfg = BilateralConfig.from_yaml(CONFIG_DIR / "pfpf_fr3.yaml")
+    assert cfg.scheme == "pfpf"
+    assert cfg.force and cfg.force_fwd and cfg.pos_spring
+    assert not cfg.tdpa
+    assert cfg.control_frequency == 100.0
+    assert cfg.leader_namespace == "leader"
+    assert cfg.follower_namespace == "follower"
+    assert cfg.leader_config == "fr3_leader_nogripper"
+    assert cfg.follower_env_config == "fr3_follower_no_cam"
+    assert cfg.leader_wrench_topic == "/leader/netft_data_unbiased_tcp"
+    assert cfg.follower_wrench_topic == "/follower/netft_data_unbiased_tcp"
+    assert cfg.leader_base_to_common_quat is not None
+    assert cfg.follower_base_to_common_quat == [0.0, 0.0, 0.0, 1.0]
+
+
 @pytest.mark.parametrize("scheme", list(EXPECTED))
 def test_scheme_yaml_loads_to_expected_flags(scheme):
     cfg = BilateralConfig.from_yaml(CONFIG_DIR / f"{scheme}.yaml")
