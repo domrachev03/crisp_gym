@@ -5,6 +5,7 @@ import pytest
 
 from crisp_gym.scripts.replay_structured_dataset import (
     _CARTESIAN_ACTION_NAMES,
+    _next_replay_state,
     _qualified_topic,
     _validate_actions,
 )
@@ -48,3 +49,24 @@ def test_qualifies_relative_follower_topic():
     """Publisher ownership checks use the same namespace resolution as ROS."""
     assert _qualified_topic("follower", "target_pose") == "/follower/target_pose"
     assert _qualified_topic("follower", "/absolute_target") == "/absolute_target"
+
+
+def test_replay_reuses_record_transition_for_start_pause_and_resume():
+    """The existing record command is a replay execution toggle."""
+    assert _next_replay_state("is_waiting", "record") == "recording"
+    assert _next_replay_state("recording", "record") == "paused"
+    assert _next_replay_state("paused", "record") == "recording"
+
+
+def test_replay_exit_requires_a_nonmoving_state():
+    """Exit is ignored during motion but accepted before, after, or while paused."""
+    assert _next_replay_state("recording", "exit") == "recording"
+    assert _next_replay_state("is_waiting", "exit") == "exit"
+    assert _next_replay_state("paused", "exit") == "exit"
+    assert _next_replay_state("finished", "exit") == "exit"
+
+
+def test_replay_ignores_record_only_save_delete_actions():
+    """Replay cannot accidentally invoke recorder-only episode operations."""
+    assert _next_replay_state("paused", "save") == "paused"
+    assert _next_replay_state("paused", "delete") == "paused"

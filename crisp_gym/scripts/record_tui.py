@@ -23,8 +23,14 @@ _KEY_ACTIONS = {
 }
 
 
-def _action_allowed(action: str, state: str | None) -> bool:
+def _action_allowed(action: str, state: str | None, mode: str = "record") -> bool:
     """Return whether the recording manager accepts ``action`` in ``state``."""
+    if mode == "replay":
+        if action == "record":
+            return state in {"is_waiting", "recording", "paused"}
+        if action == "exit":
+            return state in {"is_waiting", "paused", "finished"}
+        return False
     if action == "record":
         return state in {"is_waiting", "recording"}
     if action in {"save", "delete"}:
@@ -34,7 +40,15 @@ def _action_allowed(action: str, state: str | None) -> bool:
     return False
 
 
-def _state_label(state: str | None) -> str:
+def _state_label(state: str | None, mode: str = "record") -> str:
+    if mode == "replay":
+        return {
+            "is_waiting": "READY TO REPLAY",
+            "recording": "REPLAYING",
+            "paused": "REPLAY PAUSED",
+            "finished": "REPLAY COMPLETE",
+            "exit": "EXITING",
+        }.get(state, "REPLAY NOT DETECTED")
     return {
         "is_waiting": "WAITING",
         "recording": "RECORDING",
@@ -72,13 +86,14 @@ class RecordingTUI:
 
     def _publish(self, action: str) -> bool:
         state = self.status.get("state") if self._connected() else None
-        if not _action_allowed(action, state):
+        mode = self.status.get("mode", "record") if self._connected() else "record"
+        if not _action_allowed(action, state, mode):
             if action == "exit" and state == "recording":
-                self.notice = "Stop recording with [r] before exiting"
+                self.notice = f"Stop {mode} with [r] before exiting"
             elif state is None:
                 self.notice = "Recorder not detected; [q] again exits this TUI only"
             else:
-                self.notice = f"'{action}' is not valid while {_state_label(state)}"
+                self.notice = f"'{action}' is not valid while {_state_label(state, mode)}"
             return False
         msg = String()
         msg.data = action
@@ -101,23 +116,29 @@ class RecordingTUI:
         connected = self._connected()
         status = self.status if connected else {}
         state = status.get("state")
+        mode = status.get("mode", "record")
         state_attr = curses.A_BOLD
         if state == "recording" and curses.has_colors():
             state_attr |= curses.color_pair(1)
 
-        self._write(screen, 0, "CRISP structured recording", curses.A_BOLD)
+        title = "CRISP trajectory replay" if mode == "replay" else "CRISP structured recording"
+        self._write(screen, 0, title, curses.A_BOLD)
         self._write(screen, 2, f"Recorder : {'connected' if connected else 'not detected / stale'}")
         self._write(screen, 3, f"Dataset  : {status.get('repo_id', '-')}")
-        self._write(screen, 4, f"State    : {_state_label(state)}", state_attr)
-        self._write(
-            screen,
-            5,
-            f"Episode  : {status.get('episode', 0)} saved / {status.get('num_episodes', '-')}",
-        )
-        self._write(screen, 6, f"Frames   : {status.get('frames', 0)}")
+        self._write(screen, 4, f"State    : {_state_label(state, mode)}", state_attr)
+        if mode == "replay":
+            episode = f"{status.get('episode', 0)}"
+            frames = f"{status.get('frames', 0)} / {status.get('total_frames', '-')}"
+            controls = "[r] start/pause/resume   [q] exit"
+        else:
+            episode = f"{status.get('episode', 0)} saved / {status.get('num_episodes', '-')}"
+            frames = f"{status.get('frames', 0)}"
+            controls = "[r] start/stop   [s] save   [d] delete   [q] exit"
+        self._write(screen, 5, f"Episode  : {episode}")
+        self._write(screen, 6, f"Frames   : {frames}")
         self._write(screen, 7, f"Rate     : {status.get('fps', 0.0)} FPS")
         self._write(screen, 8, f"Last     : {status.get('last_event', '-') or '-'}")
-        self._write(screen, 10, "[r] start/stop   [s] save   [d] delete   [q] exit")
+        self._write(screen, 10, controls)
         self._write(screen, 12, self.notice)
         screen.refresh()
 

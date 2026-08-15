@@ -27,3 +27,19 @@ def test_exit_does_not_discard_active_recording():
 def test_unknown_state_has_clear_label():
     """The UI distinguishes a missing recorder from a normal state."""
     assert _state_label(None) == "NOT DETECTED"
+
+
+def test_replay_record_key_starts_pauses_and_resumes():
+    """Replay reuses the record key as a three-state execution toggle."""
+    for state in ("is_waiting", "recording", "paused"):
+        assert _action_allowed("record", state, mode="replay")
+    assert not _action_allowed("save", "paused", mode="replay")
+
+
+def test_replay_labels_and_safe_exit_states():
+    """Replay has explicit labels and still requires pausing before exit."""
+    assert _state_label("recording", mode="replay") == "REPLAYING"
+    assert _state_label("finished", mode="replay") == "REPLAY COMPLETE"
+    assert not _action_allowed("exit", "recording", mode="replay")
+    assert _action_allowed("exit", "paused", mode="replay")
+    assert _action_allowed("exit", "finished", mode="replay")
